@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: null, expiresAt: 0, trackId: null, lines: [], currentIndex: -1, demo: false, polling: null, progressTimer: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false, targetLanguage: 'es', translationRun: 0 };
+const state = { token: null, expiresAt: 0, trackId: null, lines: [], currentIndex: -1, polling: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false, targetLanguage: 'es', translationRun: 0 };
 const storageKey = 'verso.spotify';
 const lyricSizeKey = 'verso.lyrics-font-size';
 const lyricHeightKey = 'verso.lyrics-panel-height';
@@ -286,34 +286,6 @@ async function handleCallback() {
     startPolling();
   } catch (error) { history.replaceState({}, '', location.pathname); $('#settingsError').textContent = error.message; $('#settingsDialog').showModal(); }
 }
-function startDemo() {
-  state.demo = true;
-  clearInterval(state.progressTimer);
-  state.lines = [
-    { time: 0, original: '♪', translation: '' },
-    { time: 3, original: 'I see the light around me', translation: 'Veo la luz a mi alrededor' },
-    { time: 7, original: 'It follows everywhere I go', translation: 'Me sigue adondequiera que voy' },
-    { time: 11, original: 'And when the night is falling', translation: 'Y cuando cae la noche' },
-    { time: 15, original: 'I know I am not alone', translation: 'Sé que no estoy a solas' },
-    { time: 20, original: 'Every little moment feels like home', translation: 'Cada pequeño instante se siente como hogar' },
-    { time: 25, original: '♪', translation: '' }
-  ];
-  state.trackId = 'verso-demo'; state.currentIndex = -1;
-  $('#trackName').textContent = 'Light Around Me'; $('#trackArtist').textContent = 'The Paper Kites · Demo';
-  $('#trackState').textContent = 'DEMO EN REPRODUCCIÓN'; $('#playerNote').textContent = 'Una vista previa del modo en vivo';
-  $('#sourceLabel').textContent = 'MODO DEMO'; $('#duration').textContent = '0:32'; $('#lyricsSource').textContent = 'LETRAS: DEMO';
-  $('.source-chip').classList.add('connected');
-  if (state.targetLanguage === 'es') { state.translationRun++; renderLyrics(-1); }
-  else translateCurrentLyrics();
-  let progress = 0;
-  state.playback = { progressMs: 0, receivedAt: performance.now(), duration: 32000, isPlaying: true };
-  updateProgress(0, 32000);
-  state.progressTimer = setInterval(() => {
-    progress = Math.floor(estimatedProgress() / 1000);
-    if (progress >= 32) { progress = 0; state.playback = { progressMs: 0, receivedAt: performance.now(), duration: 32000, isPlaying: true }; }
-  }, 100);
-  $('#playBtn').textContent = 'Ⅱ';
-}
 function setup() {
   const settings = loadSettings();
   setLyricsFontSize(localStorage.getItem(lyricSizeKey) || 16);
@@ -354,12 +326,17 @@ function setup() {
       setLyricsPanelHeight(Number(resizeHandle.getAttribute('aria-valuenow')) + (event.key === 'ArrowDown' ? 24 : -24));
     }
   });
-  $('#demoBtn').addEventListener('click', startDemo);
   $('#navSearch').addEventListener('click', () => notify('La búsqueda manual de canciones llega pronto.'));
   $('#navNow').addEventListener('click', () => notify('Esta es tu vista de reproducción en vivo.'));
-  $('#playBtn').addEventListener('click', async () => { if (state.demo) { if (state.progressTimer) { clearInterval(state.progressTimer); state.progressTimer = null; $('#playBtn').textContent = '▶'; } else { startDemo(); } return; } if (!state.token) return notify('Conectá Spotify primero.'); try { await spotifyRequest('/me/player/pause', 'PUT'); } catch { try { await spotifyRequest('/me/player/play', 'PUT'); } catch { notify('No hay ningún dispositivo Spotify activo.'); } } pollSpotify(); });
-  $('#prevBtn').addEventListener('click', () => state.demo ? notify('Demo: control de canción no disponible.') : spotifyRequest('/me/player/previous', 'POST').catch(() => notify('No encontramos un dispositivo activo.')));
-  $('#nextBtn').addEventListener('click', () => state.demo ? notify('Demo: control de canción no disponible.') : spotifyRequest('/me/player/next', 'POST').catch(() => notify('No encontramos un dispositivo activo.')));
+  $('#playBtn').addEventListener('click', async () => {
+    if (!state.token) return notify('Conectá Spotify primero.');
+    const action = state.playback?.isPlaying ? '/me/player/pause' : '/me/player/play';
+    try { await spotifyRequest(action, 'PUT'); }
+    catch { notify('No hay ningún dispositivo Spotify activo.'); }
+    pollSpotify();
+  });
+  $('#prevBtn').addEventListener('click', () => state.token ? spotifyRequest('/me/player/previous', 'POST').catch(() => notify('No encontramos un dispositivo activo.')) : notify('Conectá Spotify primero.'));
+  $('#nextBtn').addEventListener('click', () => state.token ? spotifyRequest('/me/player/next', 'POST').catch(() => notify('No encontramos un dispositivo activo.')) : notify('Conectá Spotify primero.'));
   handleCallback();
 }
 setup();

@@ -15,7 +15,7 @@ La app usa **LRCLIB** para buscar letras con marcas de tiempo y el endpoint web 
 1. Abrí una terminal en la carpeta del proyecto.
 2. Ejecutá `py server.py`.
 3. Abrí <http://127.0.0.1:8888>.
-4. Para ver la interfaz sin conectar una cuenta, elegí **Ver demo**.
+4. Abrí la app; conectá Spotify para mostrar la canción y sus letras sincronizadas.
 
 No abras `index.html` directamente: Spotify necesita una dirección HTTP local para el retorno de inicio de sesión.
 
