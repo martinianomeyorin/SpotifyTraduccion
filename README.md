@@ -38,6 +38,8 @@ Se muestran letras sincronizadas cuando LRCLIB dispone de ellas. Las letras sin 
 
 El selector de idioma permite traducir a español, inglés, portugués, francés, italiano, alemán, japonés o coreano. El panel de letras se puede estirar desde su borde inferior y conserva la altura elegida en ese navegador; el tamaño del texto también se puede ajustar.
 
+La búsqueda permite encontrar canciones del catálogo de Spotify por título, artista o palabra y muestra hasta diez resultados. Al elegir un resultado, Verso intenta reproducirlo en el dispositivo activo para cargar sus letras; iniciar reproducción desde la API requiere Spotify Premium.
+
 ## Archivos
 
 - `index.html`: estructura de la interfaz.

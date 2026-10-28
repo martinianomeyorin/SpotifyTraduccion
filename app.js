@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: null, expiresAt: 0, trackId: null, deviceId: null, lines: [], currentIndex: -1, polling: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false, targetLanguage: 'es', translationRun: 0 };
+const state = { token: null, expiresAt: 0, trackId: null, deviceId: null, lines: [], currentIndex: -1, polling: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false, targetLanguage: 'es', translationRun: 0, searchTimer: null, searchRun: 0, searchResults: [] };
 const storageKey = 'verso.spotify';
 const lyricSizeKey = 'verso.lyrics-font-size';
 const lyricHeightKey = 'verso.lyrics-panel-height';
@@ -241,9 +241,11 @@ async function loadTrack(track, isPlaying, progress) {
   translateCurrentLyrics();
   updateCurrentLine(progress);
 }
-async function spotifyRequest(path, method = 'GET') {
+async function spotifyRequest(path, method = 'GET', body = null) {
   if (!state.token || Date.now() > state.expiresAt) { const error = new Error('La sesión de Spotify venció'); error.status = 401; throw error; }
-  const response = await fetch(`https://api.spotify.com/v1${path}`, { method, headers: { Authorization: `Bearer ${state.token}` } });
+  const headers = { Authorization: `Bearer ${state.token}` };
+  if (body) headers['Content-Type'] = 'application/json';
+  const response = await fetch(`https://api.spotify.com/v1${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   if (response.status === 204) return null;
   if (response.status === 401) { state.token = null; const error = new Error('La sesión de Spotify venció'); error.status = response.status; throw error; }
   if (!response.ok) {
@@ -255,6 +257,52 @@ async function spotifyRequest(path, method = 'GET') {
     throw error;
   }
   return response.json();
+}
+function renderSearchMessage(message, kind = '') {
+  const connect = kind === 'search-hint' ? '<button class="search-connect" type="button" data-search-connect>Conectar Spotify</button>' : '';
+  $('#songSearchResults').innerHTML = `<div class="search-empty ${kind}">${escapeHtml(message)}${connect}</div>`;
+}
+async function searchSongs(query) {
+  const term = query.trim();
+  const run = ++state.searchRun;
+  if (!term) { state.searchResults = []; return renderSearchMessage('Escribí para buscar canciones.'); }
+  if (!state.token) return renderSearchMessage('Conectá Spotify para buscar en su catálogo.', 'search-hint');
+  renderSearchMessage('Buscando canciones…', 'search-loading');
+  const params = new URLSearchParams({ q: term, type: 'track', limit: '10' });
+  try {
+    const result = await spotifyRequest(`/search?${params}`);
+    if (run !== state.searchRun) return;
+    state.searchResults = result.tracks?.items || [];
+    if (!state.searchResults.length) return renderSearchMessage('No encontramos canciones con esa búsqueda.');
+    $('#songSearchResults').innerHTML = state.searchResults.map((track, index) => {
+      const image = track.album?.images?.[2]?.url || track.album?.images?.[0]?.url || '';
+      const artists = track.artists?.map(artist => artist.name).join(', ') || 'Artista desconocido';
+      const disabled = track.is_playable === false;
+      return `<button class="search-result" type="button" role="option" aria-selected="false" data-search-index="${index}"${disabled ? ' disabled' : ''}><span class="search-art">${image ? `<img src="${escapeHtml(image)}" alt="" loading="lazy"/>` : '<span aria-hidden="true">♪</span>'}</span><span class="search-track-copy"><strong>${escapeHtml(track.name)}</strong><span>${escapeHtml(artists)}</span><small>${escapeHtml(track.album?.name || 'Single')} · ${escapeHtml(track.album?.release_date?.slice(0, 4) || '')}</small></span><span class="search-play" aria-hidden="true">${disabled ? '—' : '▶'}</span></button>`;
+    }).join('');
+  } catch (error) {
+    if (run !== state.searchRun) return;
+    if (error.status === 401) renderSearchMessage('La conexión con Spotify venció. Cerrá esta ventana y volvé a conectar tu cuenta.', 'search-error');
+    else if (error.status === 429) renderSearchMessage('Spotify recibió muchas búsquedas. Esperá un momento y probá de nuevo.', 'search-error');
+    else renderSearchMessage('No pudimos buscar en Spotify. Revisá la conexión e intentá otra vez.', 'search-error');
+  }
+}
+async function playSearchResult(index) {
+  const track = state.searchResults[index];
+  if (!track) return;
+  if (!state.token) return notify('Conectá Spotify para reproducir esta canción.');
+  if (track.is_playable === false) return notify('Esta canción no está disponible para reproducir en tu región.');
+  try {
+    const device = state.deviceId ? `?device_id=${encodeURIComponent(state.deviceId)}` : '';
+    await spotifyRequest(`/me/player/play${device}`, 'PUT', { uris: [track.uri] });
+    $('#songSearchDialog').close();
+    notify(`Reproduciendo: ${track.name}`);
+    setTimeout(pollSpotify, 450);
+  } catch (error) {
+    if (error.status === 403) notify('Spotify requiere Premium para iniciar una canción desde Verso.');
+    else if (error.status === 404) notify('Abrí Spotify en un dispositivo y volvé a elegir la canción.');
+    else notify('No se pudo iniciar la canción en Spotify. Revisá la conexión e intentá otra vez.');
+  }
 }
 async function pollSpotify() {
   if (!state.token || state.pollInFlight) return;
@@ -450,7 +498,26 @@ function setup() {
       setLyricsPanelHeight(Number(resizeHandle.getAttribute('aria-valuenow')) + (event.key === 'ArrowDown' ? 24 : -24));
     }
   });
-  $('#navSearch').addEventListener('click', () => notify('La búsqueda manual de canciones llega pronto.'));
+  $('#navSearch').addEventListener('click', () => {
+    $('#songSearchDialog').showModal();
+    $('#songSearchInput').focus();
+    if (!state.token) renderSearchMessage('Conectá Spotify para buscar en su catálogo.', 'search-hint');
+  });
+  $('#closeSongSearch').addEventListener('click', () => $('#songSearchDialog').close());
+  $('#songSearchInput').addEventListener('input', event => {
+    clearTimeout(state.searchTimer);
+    const query = event.target.value;
+    state.searchTimer = setTimeout(() => searchSongs(query), 300);
+  });
+  $('#songSearchResults').addEventListener('click', event => {
+    if (event.target.closest('[data-search-connect]')) {
+      $('#songSearchDialog').close();
+      $('#connectBtn').click();
+      return;
+    }
+    const result = event.target.closest('[data-search-index]');
+    if (result && !result.disabled) playSearchResult(Number(result.dataset.searchIndex));
+  });
   $('#navNow').addEventListener('click', () => notify('Esta es tu vista de reproducción en vivo.'));
   $('#playBtn').addEventListener('click', async () => {
     if (!state.token) return notify('Conectá Spotify primero.');
