@@ -286,7 +286,68 @@ async function handleCallback() {
     startPolling();
   } catch (error) { history.replaceState({}, '', location.pathname); $('#settingsError').textContent = error.message; $('#settingsDialog').showModal(); }
 }
+function initAmbientWaves() {
+  const canvas = $('#ambientWaves');
+  const panel = $('#lyricsPanel');
+  const context = canvas?.getContext('2d');
+  if (!canvas || !panel || !context) return;
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let width = 0;
+  let height = 0;
+  let frame = 0;
+  let phase = 0;
+  const waves = [
+    { y: 0.48, amplitude: 13, frequency: 0.012, speed: 0.0024, color: 'rgba(206,250,120,.12)' },
+    { y: 0.57, amplitude: 18, frequency: 0.009, speed: -0.0018, color: 'rgba(185,165,255,.09)' },
+    { y: 0.66, amplitude: 11, frequency: 0.015, speed: 0.0014, color: 'rgba(206,250,120,.07)' },
+  ];
+
+  function resize() {
+    const bounds = panel.getBoundingClientRect();
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    width = bounds.width;
+    height = bounds.height;
+    canvas.width = Math.round(width * pixelRatio);
+    canvas.height = Math.round(height * pixelRatio);
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    context.clearRect(0, 0, width, height);
+    for (const wave of waves) {
+      context.beginPath();
+      for (let x = 0; x <= width; x += 4) {
+        const y = height * wave.y + Math.sin(x * wave.frequency + phase * wave.speed) * wave.amplitude
+          + Math.sin(x * wave.frequency * 0.47 - phase * wave.speed * 1.4) * wave.amplitude * 0.42;
+        if (x === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      }
+      context.strokeStyle = wave.color;
+      context.lineWidth = 1.2;
+      context.stroke();
+    }
+  }
+
+  function animate() {
+    cancelAnimationFrame(frame);
+    draw();
+    if (!reducedMotion.matches && !document.hidden) {
+      phase += 1;
+      frame = requestAnimationFrame(animate);
+    }
+  }
+
+  new ResizeObserver(resize).observe(panel);
+  reducedMotion.addEventListener('change', animate);
+  document.addEventListener('visibilitychange', animate);
+  resize();
+  animate();
+}
+
 function setup() {
+  initAmbientWaves();
   const settings = loadSettings();
   setLyricsFontSize(localStorage.getItem(lyricSizeKey) || 16);
   setLyricsPanelHeight(localStorage.getItem(lyricHeightKey) || 266);
