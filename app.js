@@ -342,10 +342,21 @@ async function playSearchResult(index) {
       if (matchesTrack && playback.is_playing) { confirmed = playback; break; }
     }
     if (!confirmed) {
-      const actual = await spotifyRequest('/me/player/currently-playing');
+      const [playerResult, deviceResult] = await Promise.allSettled([
+        spotifyRequest('/me/player'),
+        spotifyRequest('/me/player/devices')
+      ]);
+      const actual = playerResult.status === 'fulfilled' ? playerResult.value : null;
+      const devices = deviceResult.status === 'fulfilled' ? deviceResult.value?.devices || [] : [];
       const currentName = actual?.item?.name;
+      const playerState = actual
+        ? `${actual.is_playing ? 'reproduciendo' : 'en pausa'}${currentName ? ` “${currentName}”` : ''}${actual.device?.name ? ` en ${actual.device.name}${actual.device.is_active ? ' (activo)' : ' (inactivo)'}` : ''}`
+        : playerResult.status === 'fulfilled' ? 'Spotify no informa una reproducción activa (GET /me/player respondió sin datos)' : 'no se pudo consultar GET /me/player';
+      const deviceState = devices.length
+        ? devices.map(device => `${device.name || device.type || 'Dispositivo'}${device.is_active ? ' (activo)' : ''}${device.is_restricted ? ' (restringido)' : ''}`).join(', ')
+        : deviceResult.status === 'fulfilled' ? 'Spotify no listó dispositivos' : 'no se pudo consultar la lista de dispositivos';
       $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
-      return setSearchStatus(currentName ? `Spotify sigue reproduciendo “${currentName}”. La canción seleccionada no cambió.` : 'Spotify aceptó la orden, pero todavía no confirmó la canción.', 'error', track);
+      return setSearchStatus(`Spotify aceptó la orden, pero no confirmó “${track.name}”. Estado: ${playerState}. Dispositivos: ${deviceState}.`, 'error', track);
     }
     $('#songSearchDialog').close();
     await loadTrack(confirmed.item, confirmed.is_playing, confirmed.progress_ms || 0);

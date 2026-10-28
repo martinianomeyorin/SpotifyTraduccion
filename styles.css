@@ -57,5 +57,6 @@
 .search-status[hidden]{display:none}
 .search-status[data-state=loading]{color:var(--lime)}
 .search-status[data-state=error]{border-color:#ff9e8f35;background:#ff9e8f08;color:#ffb4a8}
+.search-status>span{min-width:0;overflow-wrap:anywhere}
 .search-status a{flex:0 0 auto;color:var(--lime);font-weight:600;text-decoration:none;white-space:nowrap}
 .search-status a:hover{text-decoration:underline}
