@@ -22,6 +22,15 @@ function loadSettings() {
 function saveSettings(settings) {
   localStorage.setItem(storageKey, JSON.stringify(settings));
 }
+function currentRedirectUri() {
+  return `${location.origin}/callback`;
+}
+function configuredRedirectUri(settings) {
+  const saved = settings.redirectUri || '';
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const savedIsLocal = /^http:\/\/(localhost|127\.0\.0\.1):8888\/callback\/?$/i.test(saved);
+  return isLocal && savedIsLocal ? saved : currentRedirectUri();
+}
 function parseLrc(lrc) {
   const result = [];
   for (const raw of lrc.split(/\r?\n/)) {
@@ -264,13 +273,10 @@ function startDemo() {
 function setup() {
   const settings = loadSettings();
   if (settings.clientId) $('#clientId').value = settings.clientId;
-  const localCallback = /^http:\/\/(localhost|127\.0\.0\.1):8888\/callback\/?$/i;
-  const currentCallback = `${location.origin}/callback`;
-  const savedCallback = settings.redirectUri || '';
-  $('#redirectUri').value = savedCallback && !(location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && localCallback.test(savedCallback)) ? savedCallback : currentCallback;
+  $('#redirectUri').value = configuredRedirectUri(settings);
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $('#settingsShortcut').addEventListener('click', () => $('#settingsDialog').showModal());
-  $('#connectBtn').addEventListener('click', () => { const cfg = loadSettings(); if (cfg.clientId) { $('#clientId').value = cfg.clientId; $('#redirectUri').value = cfg.redirectUri || $('#redirectUri').value; } $('#settingsDialog').showModal(); });
+  $('#connectBtn').addEventListener('click', () => { const cfg = loadSettings(); if (cfg.clientId) $('#clientId').value = cfg.clientId; $('#redirectUri').value = configuredRedirectUri(cfg); $('#settingsDialog').showModal(); });
   $('#saveSettings').addEventListener('click', connectSpotify);
   $('#demoBtn').addEventListener('click', startDemo);
   $('#navSearch').addEventListener('click', () => notify('La búsqueda manual de canciones llega pronto.'));
