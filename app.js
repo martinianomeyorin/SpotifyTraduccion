@@ -357,6 +357,8 @@ async function playSearchResult(index) {
       $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
       return setSearchStatus(`Spotify aceptó la orden, pero no confirmó “${track.name}”. Estado: ${playerState}. Dispositivos: ${deviceState}.`, 'error', track);
     }
+    $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
+    setSearchStatus('');
     $('#songSearchDialog').close();
     await loadTrack(confirmed.item, confirmed.is_playing, confirmed.progress_ms || 0);
     notify(`Reproduciendo: ${track.name}`);
