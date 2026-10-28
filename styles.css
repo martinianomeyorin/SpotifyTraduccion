@@ -68,3 +68,7 @@
 .play-button .play-icon{transform:translateX(1px)}
 .play-button:focus-visible{outline:2px solid #f3f5eb;outline-offset:3px}
 .lyric-translation.translation-error{color:#ffad9e}
+.progress{height:4px;cursor:pointer;touch-action:none;transition:height .16s ease}
+.progress:hover,.progress:focus-visible{height:7px;outline:none}
+.progress:focus-visible{box-shadow:0 0 0 3px #cefa7833}
+.progress>span{pointer-events:none}

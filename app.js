@@ -173,32 +173,42 @@ function updateCurrentLine(progressMs) {
 async function seekToLyric(index) {
   const line = state.lines[index];
   if (!line) return;
-  if (!state.token) return notify('Conectá Spotify para saltar a esta línea.');
-  const positionMs = Math.max(0, Math.round(line.time * 1000));
+  return seekToPosition(Math.round(line.time * 1000));
+}
+async function seekToPosition(positionMs) {
+  const duration = state.playback?.duration || 0;
+  const targetMs = Math.max(0, Math.min(duration, Math.round(positionMs)));
+  const previousMs = estimatedProgress();
+  if (!state.token) {
+    if (state.playback) updateProgress(previousMs, duration);
+    return notify('Conectá Spotify para cambiar la posición.');
+  }
   try {
-    const params = new URLSearchParams({ position_ms: String(positionMs) });
+    const params = new URLSearchParams({ position_ms: String(targetMs) });
     if (state.deviceId) params.set('device_id', state.deviceId);
     await spotifyRequest(`/me/player/seek?${params}`, 'PUT');
     if (state.playback) {
-      state.playback.progressMs = positionMs;
+      state.playback.progressMs = targetMs;
       state.playback.receivedAt = performance.now();
-      updateProgress(positionMs, state.playback.duration);
+      updateProgress(targetMs, state.playback.duration);
     }
   } catch (error) {
     if (!error.status) {
-      const confirmed = await confirmSeek(positionMs);
+      const confirmed = await confirmSeek(targetMs);
       if (confirmed) {
         if (state.playback) {
-          state.playback.progressMs = positionMs;
+          state.playback.progressMs = targetMs;
           state.playback.receivedAt = performance.now();
-          updateProgress(positionMs, state.playback.duration);
+          updateProgress(targetMs, state.playback.duration);
         }
         return;
       }
+      if (state.playback) updateProgress(previousMs, state.playback.duration);
       return notify('Spotify pudo recibir el salto, pero no confirmó la posición. Revisá el progreso de la canción.');
     }
+    if (state.playback) updateProgress(previousMs, state.playback.duration);
     if (error.status === 403) notify('Spotify rechazó el salto. Esta función requiere Premium y un dispositivo activo.');
-    else if (error.status === 404 && /active device|device not found/i.test(`${error.message} ${error.reason || ''}`)) notify('Spotify no encontró el dispositivo activo. Abrí Spotify y volvé a tocar la línea.');
+    else if (error.status === 404 && /active device|device not found/i.test(`${error.message} ${error.reason || ''}`)) notify('Spotify no encontró el dispositivo activo. Abrí Spotify y volvé a intentarlo.');
     else if (error.status === 404) notify('Spotify respondió 404 al saltar, pero no informó que faltara un dispositivo.');
     else if (error.status === 401) notify('La conexión con Spotify venció. Volvé a conectar tu cuenta.');
     else if (error.status === 429) notify('Spotify está recibiendo muchas solicitudes. Esperá unos segundos y probá de nuevo.');
@@ -220,6 +230,10 @@ function updateProgress(progress, duration) {
   const percent = duration ? Math.min(100, progress / duration * 100) : 0;
   $('#progressFill').style.width = `${percent}%`;
   $('#progressThumb').style.left = `${percent}%`;
+  const seekControl = $('#playbackSeek');
+  seekControl.setAttribute('aria-valuemax', String(Math.max(0, Math.floor(duration / 1000))));
+  seekControl.setAttribute('aria-valuenow', String(Math.floor(progress / 1000)));
+  seekControl.setAttribute('aria-valuetext', `${formatTime(progress)} de ${formatTime(duration)}`);
   updateCurrentLine(progress);
 }
 function estimatedProgress() {
@@ -549,6 +563,49 @@ function setup() {
   $('#fontSmaller').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) - 1));
   $('#fontLarger').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) + 1));
   $('#targetLanguage').addEventListener('change', event => setTargetLanguage(event.target.value));
+  const seekBar = $('#playbackSeek');
+  let draggingSeek = null;
+  const positionAtPointer = event => {
+    const rect = seekBar.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    return Math.round((state.playback?.duration || 0) * ratio);
+  };
+  seekBar.addEventListener('pointerdown', event => {
+    if (!state.playback?.duration) return;
+    event.preventDefault();
+    draggingSeek = { pointerId: event.pointerId, positionMs: positionAtPointer(event) };
+    seekBar.setPointerCapture(event.pointerId);
+    updateProgress(draggingSeek.positionMs, state.playback.duration);
+  });
+  seekBar.addEventListener('pointermove', event => {
+    if (!draggingSeek || draggingSeek.pointerId !== event.pointerId) return;
+    draggingSeek.positionMs = positionAtPointer(event);
+    updateProgress(draggingSeek.positionMs, state.playback.duration);
+  });
+  seekBar.addEventListener('pointerup', event => {
+    if (!draggingSeek || draggingSeek.pointerId !== event.pointerId) return;
+    const { positionMs } = draggingSeek;
+    draggingSeek = null;
+    void seekToPosition(positionMs);
+  });
+  seekBar.addEventListener('pointercancel', () => {
+    draggingSeek = null;
+    if (state.playback) updateProgress(estimatedProgress(), state.playback.duration);
+  });
+  seekBar.addEventListener('keydown', event => {
+    if (!state.playback?.duration) return;
+    const current = estimatedProgress();
+    const step = event.shiftKey ? 15000 : 5000;
+    let target = null;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') target = current - step;
+    else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') target = current + step;
+    else if (event.key === 'Home') target = 0;
+    else if (event.key === 'End') target = state.playback.duration;
+    if (target === null) return;
+    event.preventDefault();
+    updateProgress(Math.max(0, Math.min(state.playback.duration, target)), state.playback.duration);
+    void seekToPosition(target);
+  });
   const lyricsPanel = $('#lyricsInner');
   lyricsPanel.addEventListener('click', event => {
     const row = event.target.closest('[data-line-index]');
