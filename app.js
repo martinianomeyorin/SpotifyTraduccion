@@ -170,8 +170,11 @@ async function seekToLyric(index) {
       updateProgress(positionMs, state.playback.duration);
     }
   } catch (error) {
-    if (error.message.includes('403')) notify('Spotify permite saltar a una posición con Premium y un dispositivo activo.');
-    else notify('No pudimos saltar a esa parte. Revisá que Spotify esté reproduciendo.');
+    if (error.status === 403) notify('Spotify rechazó el salto. Esta función requiere Premium y un dispositivo activo.');
+    else if (error.status === 404) notify('No hay un dispositivo activo. Abrí Spotify y volvé a tocar la línea.');
+    else if (error.status === 401) notify('La conexión con Spotify venció. Volvé a conectar tu cuenta.');
+    else if (error.status === 429) notify('Spotify está recibiendo muchas solicitudes. Esperá unos segundos y probá de nuevo.');
+    else notify('No pudimos comunicarnos con Spotify. Revisá tu conexión e intentá otra vez.');
   }
 }
 function updateProgress(progress, duration) {
@@ -218,8 +221,8 @@ async function spotifyRequest(path, method = 'GET') {
   if (!state.token || Date.now() > state.expiresAt) throw new Error('La sesión de Spotify venció');
   const response = await fetch(`https://api.spotify.com/v1${path}`, { method, headers: { Authorization: `Bearer ${state.token}` } });
   if (response.status === 204) return null;
-  if (response.status === 401) { state.token = null; throw new Error('La sesión de Spotify venció'); }
-  if (!response.ok) throw new Error(`Spotify respondió ${response.status}`);
+  if (response.status === 401) { state.token = null; const error = new Error('La sesión de Spotify venció'); error.status = response.status; throw error; }
+  if (!response.ok) { const error = new Error(`Spotify respondió ${response.status}`); error.status = response.status; throw error; }
   return response.json();
 }
 async function pollSpotify() {
