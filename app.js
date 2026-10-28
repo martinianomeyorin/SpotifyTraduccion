@@ -293,15 +293,32 @@ async function playSearchResult(index) {
   if (!state.token) return notify('Conectá Spotify para reproducir esta canción.');
   if (track.is_playable === false) return notify('Esta canción no está disponible para reproducir en tu región.');
   try {
+    const current = await spotifyRequest('/me/player');
+    const activeDevice = current?.device;
+    if (activeDevice?.is_restricted) return notify(`Spotify no permite controlar el dispositivo ${activeDevice.name || 'activo'}. Elegí otro desde Spotify.`);
+    state.deviceId = activeDevice?.id || null;
     const device = state.deviceId ? `?device_id=${encodeURIComponent(state.deviceId)}` : '';
     await spotifyRequest(`/me/player/play${device}`, 'PUT', { uris: [track.uri] });
+    let confirmed = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      const playback = await spotifyRequest('/me/player');
+      if (playback?.device?.id) state.deviceId = playback.device.id;
+      if (playback?.item?.id === track.id && playback.is_playing) { confirmed = playback; break; }
+    }
+    if (!confirmed) {
+      const actual = await spotifyRequest('/me/player');
+      const currentName = actual?.item?.name;
+      return notify(currentName ? `Spotify sigue reproduciendo “${currentName}”. Revisá el dispositivo activo.` : 'Spotify aceptó la orden, pero todavía no confirmó la canción.');
+    }
     $('#songSearchDialog').close();
+    await loadTrack(confirmed.item, confirmed.is_playing, confirmed.progress_ms || 0);
     notify(`Reproduciendo: ${track.name}`);
-    setTimeout(pollSpotify, 450);
   } catch (error) {
     if (error.status === 403) notify('Spotify requiere Premium para iniciar una canción desde Verso.');
     else if (error.status === 404) notify('Abrí Spotify en un dispositivo y volvé a elegir la canción.');
-    else notify('No se pudo iniciar la canción en Spotify. Revisá la conexión e intentá otra vez.');
+    else if (!error.status) notify('No pudimos confirmar la reproducción con Spotify. Revisá el dispositivo activo.');
+    else notify(`Spotify no inició la canción (${error.status}). ${error.message}`);
   }
 }
 async function pollSpotify() {
