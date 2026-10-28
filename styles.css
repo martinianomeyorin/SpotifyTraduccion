@@ -67,3 +67,4 @@
 .play-button svg{display:block;width:13px;height:13px;fill:currentColor}
 .play-button .play-icon{transform:translateX(1px)}
 .play-button:focus-visible{outline:2px solid #f3f5eb;outline-offset:3px}
+.lyric-translation.translation-error{color:#ffad9e}

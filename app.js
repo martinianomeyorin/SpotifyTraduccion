@@ -102,20 +102,33 @@ async function translateLines(lines, targetLanguage, runId) {
     const batch = nonEmpty.slice(start, start + 12);
     await Promise.all(batch.map(async line => {
       try {
-        const params = new URLSearchParams({ client: 'gtx', sl: 'auto', tl: targetLanguage, dt: 't', q: line.original });
-        const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params}`);
-        if (!response.ok) throw new Error('translate');
+        const response = await fetch('/api/translate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: line.original, targetLanguage }),
+          signal: AbortSignal.timeout(12000)
+        });
+        if (!response.ok) throw new Error(`translate:${response.status}`);
         const data = await response.json();
         if (runId !== state.translationRun) return;
-        line.translation = (data[0] || []).map(part => part[0]).join('').trim();
-      } catch { if (runId === state.translationRun) line.translation = ''; }
+        line.translation = data.translation || '';
+        line.translationFailed = !line.translation;
+      } catch {
+        if (runId === state.translationRun) {
+          line.translation = '';
+          line.translationFailed = true;
+        }
+      }
     }));
   }
 }
 function translateCurrentLyrics() {
   const runId = ++state.translationRun;
   const lines = state.lines;
-  for (const line of lines) line.translation = '';
+  for (const line of lines) {
+    line.translation = '';
+    line.translationFailed = false;
+  }
   renderLyrics(state.currentIndex);
   translateLines(lines, state.targetLanguage, runId).then(() => {
     if (runId === state.translationRun) renderLyrics(state.currentIndex);
@@ -143,7 +156,7 @@ function renderLyrics(index) {
     if (i < 0 || i >= state.lines.length) continue;
     const line = state.lines[i];
     const type = i === current ? 'current' : i < current ? 'past' : 'future';
-    items.push(`<div class="lyric-line ${type}${i > current + 1 ? ' dim' : ''}" data-line-index="${i}" role="button" tabindex="0" aria-label="Ir a ${formatTime(line.time * 1000)}: ${escapeHtml(line.original || 'instrumental') }" title="Ir a ${formatTime(line.time * 1000)}">${i === current ? `<span class="lyric-original">${escapeHtml(line.original || '♪')}</span><span class="lyric-translation">${escapeHtml(line.translation || (line.original ? 'Traduciendo…' : '♪'))}</span>` : escapeHtml(line.original || '♪')}</div>`);
+    items.push(`<div class="lyric-line ${type}${i > current + 1 ? ' dim' : ''}" data-line-index="${i}" role="button" tabindex="0" aria-label="Ir a ${formatTime(line.time * 1000)}: ${escapeHtml(line.original || 'instrumental') }" title="Ir a ${formatTime(line.time * 1000)}">${i === current ? `<span class="lyric-original">${escapeHtml(line.original || '♪')}</span><span class="lyric-translation${line.translationFailed ? ' translation-error' : ''}">${escapeHtml(line.translation || (line.original ? (line.translationFailed ? 'No se pudo traducir; probá de nuevo.' : 'Traduciendo…') : '♪'))}</span>` : escapeHtml(line.original || '♪')}</div>`);
   }
   panel.innerHTML = items.join('');
 }
