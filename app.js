@@ -314,9 +314,9 @@ async function playSearchResult(index) {
   setSearchStatus(`Conectando con Spotify para reproducir “${track.name}”…`, 'loading');
   $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = true; });
   try {
-    const current = await spotifyRequest('/me/player');
+    const current = await spotifyRequest('/me/player/currently-playing');
     const activeDevice = current?.device;
-    if (!activeDevice?.id) {
+    if (!activeDevice || (!activeDevice.id && !activeDevice.is_active)) {
       $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
       return setSearchStatus('Spotify no informa un dispositivo activo. Abrí Spotify y elegí este equipo en el selector de dispositivos.', 'error', track);
     }
@@ -325,17 +325,18 @@ async function playSearchResult(index) {
       return setSearchStatus(`Spotify no permite controlar “${activeDevice.name || 'este dispositivo'}”. Elegí otro dispositivo en Spotify.`, 'error', track);
     }
     state.deviceId = activeDevice?.id || null;
-    const device = state.deviceId ? `?device_id=${encodeURIComponent(state.deviceId)}` : '';
-    await spotifyRequest(`/me/player/play${device}`, 'PUT', { uris: [track.uri] });
+    // Omitting device_id tells Spotify to target its current active device, avoiding a cached Connect ID.
+    await spotifyRequest('/me/player/play', 'PUT', { uris: [track.uri] });
     let confirmed = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 600));
-      const playback = await spotifyRequest('/me/player');
+      const playback = await spotifyRequest('/me/player/currently-playing');
       if (playback?.device?.id) state.deviceId = playback.device.id;
-      if (playback?.item?.id === track.id && playback.is_playing) { confirmed = playback; break; }
+      const matchesTrack = playback?.item?.id === track.id || playback?.item?.linked_from?.id === track.id;
+      if (matchesTrack && playback.is_playing) { confirmed = playback; break; }
     }
     if (!confirmed) {
-      const actual = await spotifyRequest('/me/player');
+      const actual = await spotifyRequest('/me/player/currently-playing');
       const currentName = actual?.item?.name;
       $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
       return setSearchStatus(currentName ? `Spotify sigue en “${currentName}” (${actual?.device?.name || activeDevice.name}). Revisá el dispositivo activo.` : 'Spotify aceptó la orden, pero todavía no confirmó la canción.', 'error', track);
