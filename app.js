@@ -94,12 +94,13 @@ async function fetchLyrics(track) {
   }
 }
 async function translateLines(lines, targetLanguage, runId) {
-  const nonEmpty = lines.filter(line => line.original);
+  const currentTime = state.lines[state.currentIndex]?.time ?? 0;
+  const nonEmpty = lines.filter(line => line.original).sort((a, b) => Math.abs(a.time - currentTime) - Math.abs(b.time - currentTime));
   if (!nonEmpty.length) return;
-  // Google Translate's free web endpoint accepts multiple sentences. Keep batches small and
-  // preserve one result per source line so timestamps remain attached to the right phrase.
-  for (let start = 0; start < nonEmpty.length; start += 12) {
-    const batch = nonEmpty.slice(start, start + 12);
+  // Keep a low request concurrency for the free translation provider and prioritize the
+  // verse currently playing so its translation arrives before later verses.
+  for (let start = 0; start < nonEmpty.length; start += 3) {
+    const batch = nonEmpty.slice(start, start + 3);
     await Promise.all(batch.map(async line => {
       try {
         const response = await fetch('/api/translate', {
@@ -113,10 +114,12 @@ async function translateLines(lines, targetLanguage, runId) {
         if (runId !== state.translationRun) return;
         line.translation = data.translation || '';
         line.translationFailed = !line.translation;
+        if (state.lines[state.currentIndex] === line) renderLyrics(state.currentIndex);
       } catch {
         if (runId === state.translationRun) {
           line.translation = '';
           line.translationFailed = true;
+          if (state.lines[state.currentIndex] === line) renderLyrics(state.currentIndex);
         }
       }
     }));
@@ -271,8 +274,8 @@ async function loadTrack(track, isPlaying, progress) {
   state.lines = result.lines;
   $('#lyricsSource').textContent = `LETRAS: ${result.source}`;
   if (!state.lines.length) { renderLyrics(0); return; }
-  translateCurrentLyrics();
   updateCurrentLine(progress);
+  translateCurrentLyrics();
 }
 async function spotifyRequest(path, method = 'GET', body = null) {
   if (!state.token || Date.now() > state.expiresAt) { const error = new Error('La sesión de Spotify venció'); error.status = 401; throw error; }
