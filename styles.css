@@ -24,3 +24,6 @@
 .ambient-waves{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:.9}
 .lyrics-inner{z-index:1}
 @media(prefers-reduced-motion:reduce){.ambient-waves{opacity:.55}}
+.lyric-line[data-line-index]{cursor:pointer;transition:color .2s,opacity .2s,transform .2s}
+.lyric-line[data-line-index]:hover,.lyric-line[data-line-index]:focus-visible{color:var(--text);opacity:1;outline:none;text-shadow:0 0 18px #cefa7822}
+.lyric-line[data-line-index]:active{transform:translateX(2px)}

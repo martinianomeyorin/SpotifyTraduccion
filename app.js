@@ -143,7 +143,7 @@ function renderLyrics(index) {
     if (i < 0 || i >= state.lines.length) continue;
     const line = state.lines[i];
     const type = i === current ? 'current' : i < current ? 'past' : 'future';
-    items.push(`<div class="lyric-line ${type}${i > current + 1 ? ' dim' : ''}">${i === current ? `<span class="lyric-original">${escapeHtml(line.original || '♪')}</span><span class="lyric-translation">${escapeHtml(line.translation || (line.original ? 'Traduciendo…' : '♪'))}</span>` : escapeHtml(line.original || '♪')}</div>`);
+    items.push(`<div class="lyric-line ${type}${i > current + 1 ? ' dim' : ''}" data-line-index="${i}" role="button" tabindex="0" aria-label="Ir a ${formatTime(line.time * 1000)}: ${escapeHtml(line.original || 'instrumental') }" title="Ir a ${formatTime(line.time * 1000)}">${i === current ? `<span class="lyric-original">${escapeHtml(line.original || '♪')}</span><span class="lyric-translation">${escapeHtml(line.translation || (line.original ? 'Traduciendo…' : '♪'))}</span>` : escapeHtml(line.original || '♪')}</div>`);
   }
   panel.innerHTML = items.join('');
 }
@@ -156,6 +156,23 @@ function updateCurrentLine(progressMs) {
     if (state.lines[mid].time <= seconds) { best = mid; low = mid + 1; } else high = mid - 1;
   }
   if (best !== state.currentIndex) { state.currentIndex = best; renderLyrics(best); }
+}
+async function seekToLyric(index) {
+  const line = state.lines[index];
+  if (!line) return;
+  if (!state.token) return notify('Conectá Spotify para saltar a esta línea.');
+  const positionMs = Math.max(0, Math.round(line.time * 1000));
+  try {
+    await spotifyRequest(`/me/player/seek?position_ms=${positionMs}`, 'PUT');
+    if (state.playback) {
+      state.playback.progressMs = positionMs;
+      state.playback.receivedAt = performance.now();
+      updateProgress(positionMs, state.playback.duration);
+    }
+  } catch (error) {
+    if (error.message.includes('403')) notify('Spotify permite saltar a una posición con Premium y un dispositivo activo.');
+    else notify('No pudimos saltar a esa parte. Revisá que Spotify esté reproduciendo.');
+  }
 }
 function updateProgress(progress, duration) {
   $('#currentTime').textContent = formatTime(progress);
@@ -364,6 +381,17 @@ function setup() {
   $('#fontSmaller').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) - 1));
   $('#fontLarger').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) + 1));
   $('#targetLanguage').addEventListener('change', event => setTargetLanguage(event.target.value));
+  const lyricsPanel = $('#lyricsInner');
+  lyricsPanel.addEventListener('click', event => {
+    const row = event.target.closest('[data-line-index]');
+    if (row) seekToLyric(Number(row.dataset.lineIndex));
+  });
+  lyricsPanel.addEventListener('keydown', event => {
+    if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('[data-line-index]')) {
+      event.preventDefault();
+      seekToLyric(Number(event.target.dataset.lineIndex));
+    }
+  });
   const resizeHandle = $('#lyricsResizeHandle');
   resizeHandle.addEventListener('pointerdown', event => {
     event.preventDefault();

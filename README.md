@@ -26,7 +26,7 @@ No abras `index.html` directamente: Spotify necesita una dirección HTTP local p
 3. Copiá el Client ID, abrí **Conectar Spotify** en Verso y pegalo.
 4. Confirmá los permisos de lectura y control de reproducción.
 
-La app solicita `user-read-currently-playing`, `user-read-playback-state` y `user-modify-playback-state`. El último permiso se usa para los botones de reproducción. Spotify puede restringir qué usuarios de prueba pueden autorizar una app en modo Development; agregalos desde el dashboard si es necesario. Las letras proceden de LRCLIB, no de Spotify.
+La app solicita `user-read-currently-playing`, `user-read-playback-state` y `user-modify-playback-state`. Este último permiso habilita los controles del reproductor y saltar a una línea al tocarla. Spotify requiere una cuenta Premium para saltar a una posición específica. Spotify puede restringir qué usuarios de prueba pueden autorizar una app en modo Development; agregalos desde el dashboard si es necesario. Las letras proceden de LRCLIB, no de Spotify.
 
 ## Publicar en Vercel
 
