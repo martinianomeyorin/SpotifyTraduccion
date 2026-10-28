@@ -314,8 +314,19 @@ async function playSearchResult(index) {
   setSearchStatus(`Conectando con Spotify para reproducir “${track.name}”…`, 'loading');
   $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = true; });
   try {
-    // Let Spotify route the command to the active device; device-state lookups can omit it while audio is playing.
-    await spotifyRequest('/me/player/play', 'PUT', { uris: [track.uri] });
+    const available = await spotifyRequest('/me/player/devices');
+    const devices = available?.devices || [];
+    const targetDevice = devices.find(device => device.is_active && device.id && !device.is_restricted)
+      || devices.find(device => device.type === 'computer' && device.id && !device.is_restricted)
+      || devices.find(device => device.id && !device.is_restricted);
+    if (!targetDevice) {
+      $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
+      const listed = devices.map(device => `${device.name || device.type}${device.is_restricted ? ' (restringido)' : ''}`).join(', ');
+      return setSearchStatus(listed ? `Spotify muestra estos dispositivos, pero ninguno acepta controles: ${listed}.` : 'Spotify no está mostrando dispositivos controlables para esta cuenta. Abrí Spotify en esta computadora y dejalo activo.', 'error', track);
+    }
+    state.deviceId = targetDevice.id;
+    setSearchStatus(`Enviando “${track.name}” a ${targetDevice.name || 'tu dispositivo'}…`, 'loading');
+    await spotifyRequest(`/me/player/play?device_id=${encodeURIComponent(targetDevice.id)}`, 'PUT', { uris: [track.uri] });
     let confirmed = null;
     for (let attempt = 0; attempt < 6; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 600));
@@ -336,7 +347,7 @@ async function playSearchResult(index) {
   } catch (error) {
     $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
     if (error.status === 403) setSearchStatus('Spotify rechazó la reproducción (403). Revisá Premium y los permisos de la app.', 'error', track);
-    else if (error.status === 404) setSearchStatus('Spotify no encontró el reproductor activo. Abrí Spotify y seleccioná un dispositivo.', 'error', track);
+    else if (error.status === 404) setSearchStatus('Spotify no encontró ese dispositivo. Cerrá y volvé a abrir Spotify para actualizar la lista.', 'error', track);
     else if (!error.status) setSearchStatus('No pudimos comunicarnos con Spotify. Revisá la conexión y probá otra vez.', 'error', track);
     else setSearchStatus(`Spotify no inició la canción (${error.status}): ${error.message}`, 'error', track);
   }
