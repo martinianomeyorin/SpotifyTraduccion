@@ -328,15 +328,19 @@ async function playSearchResult(index) {
     setSearchStatus(`Iniciando “${track.name}” en ${targetDevice.name || 'tu dispositivo'}…`, 'loading');
     // The device is already active. Avoid transferring playback first:
     // Spotify does not guarantee ordering between Player API commands.
+    const playPayload = track.album?.uri
+      ? { context_uri: track.album.uri, offset: { uri: track.uri }, position_ms: 0 }
+      : { uris: [track.uri], position_ms: 0 };
     const playResponse = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(targetDevice.id)}`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${state.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uris: [track.uri] })
+      body: JSON.stringify(playPayload)
     });
     const playResponseBody = await playResponse.text();
     console.info('Verso Spotify play →', {
       status: playResponse.status,
       body: playResponseBody,
+      payload: playPayload,
       track: { name: track.name, id: track.id, uri: track.uri },
       device: { name: targetDevice.name, type: targetDevice.type, id: targetDevice.id, is_active: targetDevice.is_active, is_restricted: targetDevice.is_restricted, is_private_session: targetDevice.is_private_session }
     });
