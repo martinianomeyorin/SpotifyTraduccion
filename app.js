@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: null, expiresAt: 0, trackId: null, lines: [], currentIndex: -1, polling: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false, targetLanguage: 'es', translationRun: 0 };
+const state = { token: null, expiresAt: 0, trackId: null, deviceId: null, lines: [], currentIndex: -1, polling: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false, targetLanguage: 'es', translationRun: 0 };
 const storageKey = 'verso.spotify';
 const lyricSizeKey = 'verso.lyrics-font-size';
 const lyricHeightKey = 'verso.lyrics-panel-height';
@@ -163,19 +163,43 @@ async function seekToLyric(index) {
   if (!state.token) return notify('Conectá Spotify para saltar a esta línea.');
   const positionMs = Math.max(0, Math.round(line.time * 1000));
   try {
-    await spotifyRequest(`/me/player/seek?position_ms=${positionMs}`, 'PUT');
+    const params = new URLSearchParams({ position_ms: String(positionMs) });
+    if (state.deviceId) params.set('device_id', state.deviceId);
+    await spotifyRequest(`/me/player/seek?${params}`, 'PUT');
     if (state.playback) {
       state.playback.progressMs = positionMs;
       state.playback.receivedAt = performance.now();
       updateProgress(positionMs, state.playback.duration);
     }
   } catch (error) {
+    if (!error.status) {
+      const confirmed = await confirmSeek(positionMs);
+      if (confirmed) {
+        if (state.playback) {
+          state.playback.progressMs = positionMs;
+          state.playback.receivedAt = performance.now();
+          updateProgress(positionMs, state.playback.duration);
+        }
+        return;
+      }
+      return notify('Spotify pudo recibir el salto, pero no confirmó la posición. Revisá el progreso de la canción.');
+    }
     if (error.status === 403) notify('Spotify rechazó el salto. Esta función requiere Premium y un dispositivo activo.');
-    else if (error.status === 404) notify('No hay un dispositivo activo. Abrí Spotify y volvé a tocar la línea.');
+    else if (error.status === 404 && /active device|device not found/i.test(`${error.message} ${error.reason || ''}`)) notify('Spotify no encontró el dispositivo activo. Abrí Spotify y volvé a tocar la línea.');
+    else if (error.status === 404) notify('Spotify respondió 404 al saltar, pero no informó que faltara un dispositivo.');
     else if (error.status === 401) notify('La conexión con Spotify venció. Volvé a conectar tu cuenta.');
     else if (error.status === 429) notify('Spotify está recibiendo muchas solicitudes. Esperá unos segundos y probá de nuevo.');
     else notify('No pudimos comunicarnos con Spotify. Revisá tu conexión e intentá otra vez.');
   }
+}
+async function confirmSeek(positionMs) {
+  await new Promise(resolve => setTimeout(resolve, 650));
+  try {
+    const playback = await spotifyRequest('/me/player/currently-playing');
+    if (playback?.device?.id) state.deviceId = playback.device.id;
+    return playback?.item?.id === state.trackId && Number.isFinite(playback?.progress_ms)
+      && Math.abs(playback.progress_ms - positionMs) <= 5000;
+  } catch { return false; }
 }
 function updateProgress(progress, duration) {
   $('#currentTime').textContent = formatTime(progress);
@@ -218,11 +242,18 @@ async function loadTrack(track, isPlaying, progress) {
   updateCurrentLine(progress);
 }
 async function spotifyRequest(path, method = 'GET') {
-  if (!state.token || Date.now() > state.expiresAt) throw new Error('La sesión de Spotify venció');
+  if (!state.token || Date.now() > state.expiresAt) { const error = new Error('La sesión de Spotify venció'); error.status = 401; throw error; }
   const response = await fetch(`https://api.spotify.com/v1${path}`, { method, headers: { Authorization: `Bearer ${state.token}` } });
   if (response.status === 204) return null;
   if (response.status === 401) { state.token = null; const error = new Error('La sesión de Spotify venció'); error.status = response.status; throw error; }
-  if (!response.ok) { const error = new Error(`Spotify respondió ${response.status}`); error.status = response.status; throw error; }
+  if (!response.ok) {
+    let details = {};
+    try { details = await response.json(); } catch {}
+    const error = new Error(details?.error?.message || `Spotify respondió ${response.status}`);
+    error.status = response.status;
+    error.reason = details?.error?.reason;
+    throw error;
+  }
   return response.json();
 }
 async function pollSpotify() {
@@ -231,6 +262,7 @@ async function pollSpotify() {
   try {
     const data = await spotifyRequest('/me/player/currently-playing');
     if (data?.item) {
+      state.deviceId = data.device?.id || null;
       $('.source-chip').classList.add('connected');
       $('#sourceLabel').textContent = 'SPOTIFY CONECTADO';
       await loadTrack(data.item, data.is_playing, data.progress_ms || 0);
