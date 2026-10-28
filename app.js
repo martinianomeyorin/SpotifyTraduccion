@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { token: null, expiresAt: 0, trackId: null, lines: [], currentIndex: -1, demo: false, polling: null, progressTimer: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false };
 const storageKey = 'verso.spotify';
+const lyricSizeKey = 'verso.lyrics-font-size';
 
 function notify(message) {
   const toast = $('#toast');
@@ -21,6 +22,13 @@ function loadSettings() {
 }
 function saveSettings(settings) {
   localStorage.setItem(storageKey, JSON.stringify(settings));
+}
+function setLyricsFontSize(value) {
+  const size = Math.max(14, Math.min(30, Number(value) || 16));
+  document.documentElement.style.setProperty('--lyrics-font-size', `${size}px`);
+  $('#fontSizeSlider').value = String(size);
+  $('#fontSizeOutput').textContent = `${size} px`;
+  localStorage.setItem(lyricSizeKey, String(size));
 }
 function currentRedirectUri() {
   return `${location.origin}/callback`;
@@ -272,12 +280,16 @@ function startDemo() {
 }
 function setup() {
   const settings = loadSettings();
+  setLyricsFontSize(localStorage.getItem(lyricSizeKey) || 16);
   if (settings.clientId) $('#clientId').value = settings.clientId;
   $('#redirectUri').value = configuredRedirectUri(settings);
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $('#settingsShortcut').addEventListener('click', () => $('#settingsDialog').showModal());
   $('#connectBtn').addEventListener('click', () => { const cfg = loadSettings(); if (cfg.clientId) $('#clientId').value = cfg.clientId; $('#redirectUri').value = configuredRedirectUri(cfg); $('#settingsDialog').showModal(); });
   $('#saveSettings').addEventListener('click', connectSpotify);
+  $('#fontSizeSlider').addEventListener('input', event => setLyricsFontSize(event.target.value));
+  $('#fontSmaller').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) - 1));
+  $('#fontLarger').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) + 1));
   $('#demoBtn').addEventListener('click', startDemo);
   $('#navSearch').addEventListener('click', () => notify('La búsqueda manual de canciones llega pronto.'));
   $('#navNow').addEventListener('click', () => notify('Esta es tu vista de reproducción en vivo.'));
