@@ -314,8 +314,12 @@ async function playSearchResult(index) {
   setSearchStatus(`Conectando con Spotify para reproducir “${track.name}”…`, 'loading');
   $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = true; });
   try {
-    const current = await spotifyRequest('/me/player/currently-playing');
-    const activeDevice = current?.device;
+    const current = await spotifyRequest('/me/player');
+    let activeDevice = current?.device;
+    if (!activeDevice?.id) {
+      const available = await spotifyRequest('/me/player/devices');
+      activeDevice = available?.devices?.find(device => device.is_active) || activeDevice;
+    }
     if (!activeDevice || (!activeDevice.id && !activeDevice.is_active)) {
       $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
       return setSearchStatus('Spotify no informa un dispositivo activo. Abrí Spotify y elegí este equipo en el selector de dispositivos.', 'error', track);
