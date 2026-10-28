@@ -262,9 +262,28 @@ function renderSearchMessage(message, kind = '') {
   const connect = kind === 'search-hint' ? '<button class="search-connect" type="button" data-search-connect>Conectar Spotify</button>' : '';
   $('#songSearchResults').innerHTML = `<div class="search-empty ${kind}">${escapeHtml(message)}${connect}</div>`;
 }
+function setSearchStatus(message, kind = '', track = null) {
+  const status = $('#songSearchStatus');
+  status.replaceChildren();
+  status.hidden = !message;
+  status.dataset.state = kind;
+  if (!message) return;
+  const text = document.createElement('span');
+  text.textContent = message;
+  status.append(text);
+  if (track?.id) {
+    const link = document.createElement('a');
+    link.href = `https://open.spotify.com/track/${encodeURIComponent(track.id)}`;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.textContent = 'Abrir en Spotify';
+    status.append(link);
+  }
+}
 async function searchSongs(query) {
   const term = query.trim();
   const run = ++state.searchRun;
+  setSearchStatus('');
   if (!term) { state.searchResults = []; return renderSearchMessage('Escribí para buscar canciones.'); }
   if (!state.token) return renderSearchMessage('Conectá Spotify para buscar en su catálogo.', 'search-hint');
   renderSearchMessage('Buscando canciones…', 'search-loading');
@@ -290,12 +309,21 @@ async function searchSongs(query) {
 async function playSearchResult(index) {
   const track = state.searchResults[index];
   if (!track) return;
-  if (!state.token) return notify('Conectá Spotify para reproducir esta canción.');
-  if (track.is_playable === false) return notify('Esta canción no está disponible para reproducir en tu región.');
+  if (!state.token) return setSearchStatus('Conectá Spotify para reproducir esta canción.', 'error');
+  if (track.is_playable === false) return setSearchStatus('Esta canción no está disponible para reproducir en tu región.', 'error', track);
+  setSearchStatus(`Conectando con Spotify para reproducir “${track.name}”…`, 'loading');
+  $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = true; });
   try {
     const current = await spotifyRequest('/me/player');
     const activeDevice = current?.device;
-    if (activeDevice?.is_restricted) return notify(`Spotify no permite controlar el dispositivo ${activeDevice.name || 'activo'}. Elegí otro desde Spotify.`);
+    if (!activeDevice?.id) {
+      $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
+      return setSearchStatus('Spotify no informa un dispositivo activo. Abrí Spotify y elegí este equipo en el selector de dispositivos.', 'error', track);
+    }
+    if (activeDevice.is_restricted) {
+      $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
+      return setSearchStatus(`Spotify no permite controlar “${activeDevice.name || 'este dispositivo'}”. Elegí otro dispositivo en Spotify.`, 'error', track);
+    }
     state.deviceId = activeDevice?.id || null;
     const device = state.deviceId ? `?device_id=${encodeURIComponent(state.deviceId)}` : '';
     await spotifyRequest(`/me/player/play${device}`, 'PUT', { uris: [track.uri] });
@@ -309,16 +337,18 @@ async function playSearchResult(index) {
     if (!confirmed) {
       const actual = await spotifyRequest('/me/player');
       const currentName = actual?.item?.name;
-      return notify(currentName ? `Spotify sigue reproduciendo “${currentName}”. Revisá el dispositivo activo.` : 'Spotify aceptó la orden, pero todavía no confirmó la canción.');
+      $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
+      return setSearchStatus(currentName ? `Spotify sigue en “${currentName}” (${actual?.device?.name || activeDevice.name}). Revisá el dispositivo activo.` : 'Spotify aceptó la orden, pero todavía no confirmó la canción.', 'error', track);
     }
     $('#songSearchDialog').close();
     await loadTrack(confirmed.item, confirmed.is_playing, confirmed.progress_ms || 0);
     notify(`Reproduciendo: ${track.name}`);
   } catch (error) {
-    if (error.status === 403) notify('Spotify requiere Premium para iniciar una canción desde Verso.');
-    else if (error.status === 404) notify('Abrí Spotify en un dispositivo y volvé a elegir la canción.');
-    else if (!error.status) notify('No pudimos confirmar la reproducción con Spotify. Revisá el dispositivo activo.');
-    else notify(`Spotify no inició la canción (${error.status}). ${error.message}`);
+    $('#songSearchResults').querySelectorAll('.search-result').forEach(result => { result.disabled = false; });
+    if (error.status === 403) setSearchStatus('Spotify rechazó la reproducción (403). Revisá Premium y los permisos de la app.', 'error', track);
+    else if (error.status === 404) setSearchStatus('Spotify no encontró el reproductor activo. Abrí Spotify y seleccioná un dispositivo.', 'error', track);
+    else if (!error.status) setSearchStatus('No pudimos comunicarnos con Spotify. Revisá la conexión y probá otra vez.', 'error', track);
+    else setSearchStatus(`Spotify no inició la canción (${error.status}): ${error.message}`, 'error', track);
   }
 }
 async function pollSpotify() {
