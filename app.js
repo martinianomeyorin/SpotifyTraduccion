@@ -325,17 +325,13 @@ async function playSearchResult(index) {
       return setSearchStatus(listed ? `Spotify muestra estos dispositivos, pero ninguno acepta controles: ${listed}.` : 'Spotify no está mostrando dispositivos controlables para esta cuenta. Abrí Spotify en esta computadora y dejalo activo.', 'error', track);
     }
     state.deviceId = targetDevice.id;
-    setSearchStatus(`Activando ${targetDevice.name || 'tu dispositivo'} para reproducir “${track.name}”…`, 'loading');
-    // Selecting a Connect device as `device_id` in /play does not always
-    // switch Spotify's active output. Transfer it explicitly first, then
-    // start the chosen URI on that device.
-    await spotifyRequest('/me/player', 'PUT', { device_ids: [targetDevice.id], play: true });
-    await new Promise(resolve => setTimeout(resolve, 700));
     setSearchStatus(`Iniciando “${track.name}” en ${targetDevice.name || 'tu dispositivo'}…`, 'loading');
+    // The device is already active. Avoid transferring playback first:
+    // Spotify does not guarantee ordering between Player API commands.
     await spotifyRequest(`/me/player/play?device_id=${encodeURIComponent(targetDevice.id)}`, 'PUT', { uris: [track.uri] });
     let confirmed = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 600));
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 750));
       const playback = await spotifyRequest('/me/player/currently-playing');
       if (playback?.device?.id) state.deviceId = playback.device.id;
       const matchesTrack = playback?.item?.id === track.id || playback?.item?.linked_from?.id === track.id;
