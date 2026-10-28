@@ -1,7 +1,10 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { token: null, expiresAt: 0, trackId: null, lines: [], currentIndex: -1, demo: false, polling: null, progressTimer: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false };
+const state = { token: null, expiresAt: 0, trackId: null, lines: [], currentIndex: -1, demo: false, polling: null, progressTimer: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false, targetLanguage: 'es', translationRun: 0 };
 const storageKey = 'verso.spotify';
 const lyricSizeKey = 'verso.lyrics-font-size';
+const lyricHeightKey = 'verso.lyrics-panel-height';
+const targetLanguageKey = 'verso.target-language';
+const supportedLanguages = new Set(['es', 'en', 'pt', 'fr', 'it', 'de', 'ja', 'ko']);
 
 function notify(message) {
   const toast = $('#toast');
@@ -29,6 +32,22 @@ function setLyricsFontSize(value) {
   $('#fontSizeSlider').value = String(size);
   $('#fontSizeOutput').textContent = `${size} px`;
   localStorage.setItem(lyricSizeKey, String(size));
+  if (state.lines.length) renderLyrics(state.currentIndex);
+}
+function setLyricsPanelHeight(value) {
+  const maxHeight = Math.max(220, Math.floor(window.innerHeight * 0.75));
+  const height = Math.max(220, Math.min(maxHeight, Number(value) || 266));
+  $('#lyricsPanel').style.height = `${height}px`;
+  $('#lyricsResizeHandle').setAttribute('aria-valuenow', String(height));
+  $('#lyricsResizeHandle').setAttribute('aria-valuemax', String(maxHeight));
+  localStorage.setItem(lyricHeightKey, String(height));
+  if (state.lines.length) renderLyrics(state.currentIndex);
+}
+function setTargetLanguage(language) {
+  state.targetLanguage = supportedLanguages.has(language) ? language : 'es';
+  $('#targetLanguage').value = state.targetLanguage;
+  localStorage.setItem(targetLanguageKey, state.targetLanguage);
+  if (state.lines.length) translateCurrentLyrics();
 }
 function currentRedirectUri() {
   return `${location.origin}/callback`;
@@ -74,7 +93,7 @@ async function fetchLyrics(track) {
     return { lines: [], source: 'LRCLIB' };
   }
 }
-async function translateLines(lines) {
+async function translateLines(lines, targetLanguage, runId) {
   const nonEmpty = lines.filter(line => line.original);
   if (!nonEmpty.length) return;
   // Google Translate's free web endpoint accepts multiple sentences. Keep batches small and
@@ -83,14 +102,24 @@ async function translateLines(lines) {
     const batch = nonEmpty.slice(start, start + 12);
     await Promise.all(batch.map(async line => {
       try {
-        const params = new URLSearchParams({ client: 'gtx', sl: 'auto', tl: 'es', dt: 't', q: line.original });
+        const params = new URLSearchParams({ client: 'gtx', sl: 'auto', tl: targetLanguage, dt: 't', q: line.original });
         const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params}`);
         if (!response.ok) throw new Error('translate');
         const data = await response.json();
+        if (runId !== state.translationRun) return;
         line.translation = (data[0] || []).map(part => part[0]).join('').trim();
-      } catch { line.translation = ''; }
+      } catch { if (runId === state.translationRun) line.translation = ''; }
     }));
   }
+}
+function translateCurrentLyrics() {
+  const runId = ++state.translationRun;
+  const lines = state.lines;
+  for (const line of lines) line.translation = '';
+  renderLyrics(state.currentIndex);
+  translateLines(lines, state.targetLanguage, runId).then(() => {
+    if (runId === state.translationRun) renderLyrics(state.currentIndex);
+  });
 }
 function renderLyrics(index) {
   const panel = $('#lyricsInner');
@@ -105,7 +134,12 @@ function renderLyrics(index) {
   }
   const current = Math.max(0, Math.min(index, state.lines.length - 1));
   const items = [];
-  for (let i = current - 1; i <= current + 2; i++) {
+  const panelHeight = $('#lyricsPanel').getBoundingClientRect().height || 266;
+  const fontSize = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--lyrics-font-size')) || 16;
+  const visibleRows = Math.max(4, Math.floor((panelHeight - 80) / (fontSize * 1.5 + 17)));
+  const before = Math.floor((visibleRows - 1) / 2);
+  const after = visibleRows - before - 1;
+  for (let i = current - before; i <= current + after; i++) {
     if (i < 0 || i >= state.lines.length) continue;
     const line = state.lines[i];
     const type = i === current ? 'current' : i < current ? 'past' : 'future';
@@ -151,6 +185,7 @@ function setTrack(track, isPlaying, progress) {
 async function loadTrack(track, isPlaying, progress) {
   setTrack(track, isPlaying, progress);
   if (state.trackId === track.id) return;
+  state.translationRun++;
   state.trackId = track.id;
   state.currentIndex = -1;
   $('#lyricsSource').textContent = 'LETRAS: BUSCANDO…';
@@ -159,8 +194,7 @@ async function loadTrack(track, isPlaying, progress) {
   state.lines = result.lines;
   $('#lyricsSource').textContent = `LETRAS: ${result.source}`;
   if (!state.lines.length) { renderLyrics(0); return; }
-  renderLyrics(-1);
-  translateLines(state.lines).then(() => renderLyrics(state.currentIndex));
+  translateCurrentLyrics();
   updateCurrentLine(progress);
 }
 async function spotifyRequest(path, method = 'GET') {
@@ -268,7 +302,9 @@ function startDemo() {
   $('#trackName').textContent = 'Light Around Me'; $('#trackArtist').textContent = 'The Paper Kites · Demo';
   $('#trackState').textContent = 'DEMO EN REPRODUCCIÓN'; $('#playerNote').textContent = 'Una vista previa del modo en vivo';
   $('#sourceLabel').textContent = 'MODO DEMO'; $('#duration').textContent = '0:32'; $('#lyricsSource').textContent = 'LETRAS: DEMO';
-  $('.source-chip').classList.add('connected'); renderLyrics(-1);
+  $('.source-chip').classList.add('connected');
+  if (state.targetLanguage === 'es') { state.translationRun++; renderLyrics(-1); }
+  else translateCurrentLyrics();
   let progress = 0;
   state.playback = { progressMs: 0, receivedAt: performance.now(), duration: 32000, isPlaying: true };
   updateProgress(0, 32000);
@@ -281,6 +317,10 @@ function startDemo() {
 function setup() {
   const settings = loadSettings();
   setLyricsFontSize(localStorage.getItem(lyricSizeKey) || 16);
+  setLyricsPanelHeight(localStorage.getItem(lyricHeightKey) || 266);
+  const savedLanguage = localStorage.getItem(targetLanguageKey) || 'es';
+  state.targetLanguage = supportedLanguages.has(savedLanguage) ? savedLanguage : 'es';
+  $('#targetLanguage').value = state.targetLanguage;
   if (settings.clientId) $('#clientId').value = settings.clientId;
   $('#redirectUri').value = configuredRedirectUri(settings);
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
@@ -290,6 +330,30 @@ function setup() {
   $('#fontSizeSlider').addEventListener('input', event => setLyricsFontSize(event.target.value));
   $('#fontSmaller').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) - 1));
   $('#fontLarger').addEventListener('click', () => setLyricsFontSize(Number($('#fontSizeSlider').value) + 1));
+  $('#targetLanguage').addEventListener('change', event => setTargetLanguage(event.target.value));
+  const resizeHandle = $('#lyricsResizeHandle');
+  resizeHandle.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = $('#lyricsPanel').getBoundingClientRect().height;
+    resizeHandle.setPointerCapture(event.pointerId);
+    const move = moveEvent => setLyricsPanelHeight(startHeight + moveEvent.clientY - startY);
+    const finish = finishEvent => {
+      resizeHandle.removeEventListener('pointermove', move);
+      resizeHandle.removeEventListener('pointerup', finish);
+      resizeHandle.removeEventListener('pointercancel', finish);
+      if (resizeHandle.hasPointerCapture(finishEvent.pointerId)) resizeHandle.releasePointerCapture(finishEvent.pointerId);
+    };
+    resizeHandle.addEventListener('pointermove', move);
+    resizeHandle.addEventListener('pointerup', finish);
+    resizeHandle.addEventListener('pointercancel', finish);
+  });
+  resizeHandle.addEventListener('keydown', event => {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      setLyricsPanelHeight(Number(resizeHandle.getAttribute('aria-valuenow')) + (event.key === 'ArrowDown' ? 24 : -24));
+    }
+  });
   $('#demoBtn').addEventListener('click', startDemo);
   $('#navSearch').addEventListener('click', () => notify('La búsqueda manual de canciones llega pronto.'));
   $('#navNow').addEventListener('click', () => notify('Esta es tu vista de reproducción en vivo.'));

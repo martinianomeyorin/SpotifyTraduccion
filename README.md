@@ -34,7 +34,9 @@ Este proyecto es estático y no necesita una compilación. Importá el repositor
 
 ## Alcance
 
-Se muestran letras sincronizadas cuando LRCLIB dispone de ellas. Las letras sin marcas de tiempo no se pueden presentar con sincronización precisa. La app busca y traduce al cambiar de canción, y actualiza la línea actual cada 2,5 segundos. El uso depende de servicios web gratuitos de terceros, que pueden cambiar límites o disponibilidad.
+Se muestran letras sincronizadas cuando LRCLIB dispone de ellas. Las letras sin marcas de tiempo no se pueden presentar con sincronización precisa. La app consulta Spotify cada 2,5 segundos, interpola el progreso entre consultas y busca/traduce letras al cambiar de canción. El uso depende de servicios web gratuitos de terceros, que pueden cambiar límites o disponibilidad.
+
+El selector de idioma permite traducir a español, inglés, portugués, francés, italiano, alemán, japonés o coreano. El panel de letras se puede estirar desde su borde inferior y conserva la altura elegida en ese navegador; el tamaño del texto también se puede ajustar.
 
 ## Archivos
 
