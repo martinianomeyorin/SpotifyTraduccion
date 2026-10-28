@@ -218,9 +218,15 @@ function setTrack(track, isPlaying, progress) {
   $('#trackName').textContent = track.name;
   $('#trackArtist').textContent = track.artists?.map(a => a.name).join(' · ') || 'Spotify';
   $('#trackState').textContent = isPlaying ? 'REPRODUCIENDO AHORA' : 'EN PAUSA';
-  $('#playBtn').textContent = isPlaying ? 'Ⅱ' : '▶';
+  $('#playBtn').setAttribute('aria-label', isPlaying ? 'Pausar' : 'Reproducir');
+  $('#playBtn').innerHTML = isPlaying
+    ? '<svg class="pause-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3.5a.75.75 0 0 1 .75-.75h1a.75.75 0 0 1 .75.75v9a.75.75 0 0 1-.75.75h-1A.75.75 0 0 1 4 12.5zm5.5 0a.75.75 0 0 1 .75-.75h1a.75.75 0 0 1 .75.75v9a.75.75 0 0 1-.75.75h-1a.75.75 0 0 1-.75-.75z"/></svg>'
+    : '<svg class="play-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.25c0-.58.63-.94 1.13-.64l6.06 3.61a.9.9 0 0 1 0 1.56l-6.06 3.61A.75.75 0 0 1 5 10.75z"/></svg>';
   $('#playerNote').textContent = isPlaying ? 'Siguiendo el ritmo de tu reproducción' : 'Tu música está en pausa';
-  $('#albumArt').style.backgroundImage = track.album?.images?.[0]?.url ? `linear-gradient(90deg,#1115,#1110),url("${track.album.images[0].url}")` : '';
+  const albumArt = $('#albumArt');
+  const coverUrl = track.album?.images?.[0]?.url;
+  albumArt.classList.toggle('has-image', Boolean(coverUrl));
+  albumArt.style.backgroundImage = coverUrl ? `url("${coverUrl}")` : '';
   $('#albumArt').style.backgroundSize = 'cover';
   $('#albumArt').style.backgroundPosition = 'center';
   state.playback = { progressMs: progress, receivedAt: performance.now(), duration: track.duration_ms, isPlaying };
