@@ -1,0 +1,283 @@
+const $ = (selector) => document.querySelector(selector);
+const state = { token: null, expiresAt: 0, trackId: null, lines: [], currentIndex: -1, demo: false, polling: null, progressTimer: null, renderTimer: null, toastTimer: null, playback: null, pollInFlight: false };
+const storageKey = 'verso.spotify';
+
+function notify(message) {
+  const toast = $('#toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => toast.classList.remove('show'), 3600);
+}
+function formatTime(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function loadSettings() {
+  try { return JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { return {}; }
+}
+function saveSettings(settings) {
+  localStorage.setItem(storageKey, JSON.stringify(settings));
+}
+function parseLrc(lrc) {
+  const result = [];
+  for (const raw of lrc.split(/\r?\n/)) {
+    const regex = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
+    let match;
+    const timestamps = [];
+    while ((match = regex.exec(raw))) {
+      const fraction = match[3] ? Number(`0.${match[3]}`) : 0;
+      timestamps.push(Number(match[1]) * 60 + Number(match[2]) + fraction);
+    }
+    const lyric = raw.replace(/\[[^\]]+\]/g, '').trim();
+    for (const time of timestamps) result.push({ time, original: lyric, translation: '' });
+  }
+  return result.sort((a, b) => a.time - b.time);
+}
+async function fetchLyrics(track) {
+  const params = new URLSearchParams({ track_name: track.name, artist_name: track.artists?.map(a => a.name).join(', ') || '', album_name: track.album?.name || '', duration: String(Math.round(track.duration_ms / 1000)) });
+  try {
+    const response = await fetch(`https://lrclib.net/api/get?${params}`);
+    if (!response.ok) throw new Error('no sincronizada');
+    const data = await response.json();
+    if (!data.syncedLyrics) throw new Error('sin tiempos');
+    return { lines: parseLrc(data.syncedLyrics), source: 'LRCLIB' };
+  } catch {
+    // Fallback: search by title and artist in case the album/version metadata differs.
+    try {
+      const search = new URLSearchParams({ track_name: track.name, artist_name: track.artists?.map(a => a.name).join(', ') || '' });
+      const response = await fetch(`https://lrclib.net/api/search?${search}`);
+      const results = await response.json();
+      const match = results.find(item => item.syncedLyrics);
+      if (match) return { lines: parseLrc(match.syncedLyrics), source: 'LRCLIB' };
+    } catch { /* A graceful empty state is shown below. */ }
+    return { lines: [], source: 'LRCLIB' };
+  }
+}
+async function translateLines(lines) {
+  const nonEmpty = lines.filter(line => line.original);
+  if (!nonEmpty.length) return;
+  // Google Translate's free web endpoint accepts multiple sentences. Keep batches small and
+  // preserve one result per source line so timestamps remain attached to the right phrase.
+  for (let start = 0; start < nonEmpty.length; start += 12) {
+    const batch = nonEmpty.slice(start, start + 12);
+    await Promise.all(batch.map(async line => {
+      try {
+        const params = new URLSearchParams({ client: 'gtx', sl: 'auto', tl: 'es', dt: 't', q: line.original });
+        const response = await fetch(`https://translate.googleapis.com/translate_a/single?${params}`);
+        if (!response.ok) throw new Error('translate');
+        const data = await response.json();
+        line.translation = (data[0] || []).map(part => part[0]).join('').trim();
+      } catch { line.translation = ''; }
+    }));
+  }
+}
+function renderLyrics(index) {
+  const panel = $('#lyricsInner');
+  if (!state.lines.length) {
+    panel.innerHTML = '<div class="lyric-line past">Las letras sincronizadas se buscan gratis</div><div class="lyric-line current"><span class="lyric-original">No encontramos una letra con tiempos</span><span class="lyric-translation">Probá con otra versión de la canción</span></div><div class="lyric-line future">Hay canciones que todavía no tienen letra en LRCLIB</div>';
+    return;
+  }
+  if (index < 0) {
+    const next = state.lines.find(line => line.original);
+    panel.innerHTML = `<div class="lyric-line past">♪</div><div class="lyric-line current"><span class="lyric-original">La letra aparece cuando empieza a sonar</span><span class="lyric-translation">${next ? 'Esperando el primer verso…' : 'Buscando letra sincronizada…'}</span></div><div class="lyric-line future">♪</div>`;
+    return;
+  }
+  const current = Math.max(0, Math.min(index, state.lines.length - 1));
+  const items = [];
+  for (let i = current - 1; i <= current + 2; i++) {
+    if (i < 0 || i >= state.lines.length) continue;
+    const line = state.lines[i];
+    const type = i === current ? 'current' : i < current ? 'past' : 'future';
+    items.push(`<div class="lyric-line ${type}${i > current + 1 ? ' dim' : ''}">${i === current ? `<span class="lyric-original">${escapeHtml(line.original || '♪')}</span><span class="lyric-translation">${escapeHtml(line.translation || (line.original ? 'Traduciendo…' : '♪'))}</span>` : escapeHtml(line.original || '♪')}</div>`);
+  }
+  panel.innerHTML = items.join('');
+}
+function updateCurrentLine(progressMs) {
+  if (!state.lines.length) return;
+  const seconds = progressMs / 1000;
+  let low = 0, high = state.lines.length - 1, best = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (state.lines[mid].time <= seconds) { best = mid; low = mid + 1; } else high = mid - 1;
+  }
+  if (best !== state.currentIndex) { state.currentIndex = best; renderLyrics(best); }
+}
+function updateProgress(progress, duration) {
+  $('#currentTime').textContent = formatTime(progress);
+  $('#duration').textContent = formatTime(duration);
+  const percent = duration ? Math.min(100, progress / duration * 100) : 0;
+  $('#progressFill').style.width = `${percent}%`;
+  $('#progressThumb').style.left = `${percent}%`;
+  updateCurrentLine(progress);
+}
+function estimatedProgress() {
+  if (!state.playback) return 0;
+  const elapsed = state.playback.isPlaying ? performance.now() - state.playback.receivedAt : 0;
+  return Math.min(state.playback.duration, Math.max(0, state.playback.progressMs + elapsed));
+}
+function setTrack(track, isPlaying, progress) {
+  $('#trackName').textContent = track.name;
+  $('#trackArtist').textContent = track.artists?.map(a => a.name).join(' · ') || 'Spotify';
+  $('#trackState').textContent = isPlaying ? 'REPRODUCIENDO AHORA' : 'EN PAUSA';
+  $('#playBtn').textContent = isPlaying ? 'Ⅱ' : '▶';
+  $('#playerNote').textContent = isPlaying ? 'Siguiendo el ritmo de tu reproducción' : 'Tu música está en pausa';
+  $('#albumArt').style.backgroundImage = track.album?.images?.[0]?.url ? `linear-gradient(90deg,#1115,#1110),url("${track.album.images[0].url}")` : '';
+  $('#albumArt').style.backgroundSize = 'cover';
+  $('#albumArt').style.backgroundPosition = 'center';
+  state.playback = { progressMs: progress, receivedAt: performance.now(), duration: track.duration_ms, isPlaying };
+  updateProgress(progress, track.duration_ms);
+}
+async function loadTrack(track, isPlaying, progress) {
+  setTrack(track, isPlaying, progress);
+  if (state.trackId === track.id) return;
+  state.trackId = track.id;
+  state.currentIndex = -1;
+  $('#lyricsSource').textContent = 'LETRAS: BUSCANDO…';
+  const result = await fetchLyrics(track);
+  if (state.trackId !== track.id) return;
+  state.lines = result.lines;
+  $('#lyricsSource').textContent = `LETRAS: ${result.source}`;
+  if (!state.lines.length) { renderLyrics(0); return; }
+  renderLyrics(-1);
+  translateLines(state.lines).then(() => renderLyrics(state.currentIndex));
+  updateCurrentLine(progress);
+}
+async function spotifyRequest(path, method = 'GET') {
+  if (!state.token || Date.now() > state.expiresAt) throw new Error('La sesión de Spotify venció');
+  const response = await fetch(`https://api.spotify.com/v1${path}`, { method, headers: { Authorization: `Bearer ${state.token}` } });
+  if (response.status === 204) return null;
+  if (response.status === 401) { state.token = null; throw new Error('La sesión de Spotify venció'); }
+  if (!response.ok) throw new Error(`Spotify respondió ${response.status}`);
+  return response.json();
+}
+async function pollSpotify() {
+  if (!state.token || state.pollInFlight) return;
+  state.pollInFlight = true;
+  try {
+    const data = await spotifyRequest('/me/player/currently-playing');
+    if (data?.item) {
+      $('.source-chip').classList.add('connected');
+      $('#sourceLabel').textContent = 'SPOTIFY CONECTADO';
+      await loadTrack(data.item, data.is_playing, data.progress_ms || 0);
+    } else {
+      $('#trackState').textContent = 'ESPERANDO MÚSICA';
+      $('#playerNote').textContent = 'Reproducí algo en Spotify';
+    }
+  } catch (error) {
+    if (/venció/.test(error.message)) {
+      state.token = null;
+      $('#sourceLabel').textContent = 'SESIÓN VENCIDA';
+      $('.source-chip').classList.remove('connected');
+      $('#connectBtn').textContent = 'Conectar Spotify';
+      clearInterval(state.polling);
+      notify('La sesión de Spotify venció. Volvé a conectar.');
+    }
+  } finally {
+    state.pollInFlight = false;
+  }
+}
+function startPolling() {
+  clearInterval(state.polling);
+  clearInterval(state.renderTimer);
+  pollSpotify();
+  state.polling = setInterval(pollSpotify, 2500);
+  state.renderTimer = setInterval(() => {
+    if (state.playback) updateProgress(estimatedProgress(), state.playback.duration);
+  }, 100);
+}
+function randomString(length) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return Array.from(bytes, b => chars[b % chars.length]).join('');
+}
+async function connectSpotify() {
+  const settings = loadSettings();
+  const clientId = $('#clientId').value.trim() || settings.clientId;
+  const redirectUri = $('#redirectUri').value.trim() || settings.redirectUri || `${location.origin}/callback`;
+  $('#settingsError').textContent = '';
+  if (!clientId) { $('#settingsError').textContent = 'Ingresá el Client ID de tu app de Spotify.'; return; }
+  if (location.protocol === 'file:') { $('#settingsError').textContent = 'Abrí el proyecto con un servidor local para conectar Spotify (ver README).'; return; }
+  saveSettings({ clientId, redirectUri });
+  const verifier = randomString(64);
+  const challenge = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challengeBase64 = btoa(String.fromCharCode(...new Uint8Array(challenge))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const authState = randomString(24);
+  sessionStorage.setItem('verso.pkce', JSON.stringify({ verifier, authState, redirectUri }));
+  const params = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: redirectUri, scope: 'user-read-currently-playing user-read-playback-state user-modify-playback-state', state: authState, code_challenge_method: 'S256', code_challenge: challengeBase64 });
+  location.assign(`https://accounts.spotify.com/authorize?${params}`);
+}
+async function handleCallback() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code');
+  if (!code) return;
+  const saved = JSON.parse(sessionStorage.getItem('verso.pkce') || '{}');
+  const returnedState = params.get('state');
+  if (!saved.verifier || returnedState !== saved.authState) { notify('No se pudo validar el inicio de sesión. Probá de nuevo.'); history.replaceState({}, '', location.pathname); return; }
+  const { clientId } = loadSettings();
+  const form = new URLSearchParams({ client_id: clientId, grant_type: 'authorization_code', code, redirect_uri: saved.redirectUri, code_verifier: saved.verifier });
+  try {
+    const response = await fetch('https://accounts.spotify.com/api/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error_description || 'Spotify no pudo iniciar sesión');
+    state.token = data.access_token;
+    state.expiresAt = Date.now() + data.expires_in * 1000;
+    sessionStorage.removeItem('verso.pkce');
+    history.replaceState({}, '', location.pathname);
+    $('#connectBtn').textContent = 'Spotify conectado';
+    $('#sourceLabel').textContent = 'SPOTIFY CONECTADO';
+    $('.source-chip').classList.add('connected');
+    $('#settingsDialog').close();
+    notify('¡Listo! Esperando lo que suena en Spotify.');
+    startPolling();
+  } catch (error) { history.replaceState({}, '', location.pathname); $('#settingsError').textContent = error.message; $('#settingsDialog').showModal(); }
+}
+function startDemo() {
+  state.demo = true;
+  clearInterval(state.progressTimer);
+  state.lines = [
+    { time: 0, original: '♪', translation: '' },
+    { time: 3, original: 'I see the light around me', translation: 'Veo la luz a mi alrededor' },
+    { time: 7, original: 'It follows everywhere I go', translation: 'Me sigue adondequiera que voy' },
+    { time: 11, original: 'And when the night is falling', translation: 'Y cuando cae la noche' },
+    { time: 15, original: 'I know I am not alone', translation: 'Sé que no estoy a solas' },
+    { time: 20, original: 'Every little moment feels like home', translation: 'Cada pequeño instante se siente como hogar' },
+    { time: 25, original: '♪', translation: '' }
+  ];
+  state.trackId = 'verso-demo'; state.currentIndex = -1;
+  $('#trackName').textContent = 'Light Around Me'; $('#trackArtist').textContent = 'The Paper Kites · Demo';
+  $('#trackState').textContent = 'DEMO EN REPRODUCCIÓN'; $('#playerNote').textContent = 'Una vista previa del modo en vivo';
+  $('#sourceLabel').textContent = 'MODO DEMO'; $('#duration').textContent = '0:32'; $('#lyricsSource').textContent = 'LETRAS: DEMO';
+  $('.source-chip').classList.add('connected'); renderLyrics(-1);
+  let progress = 0;
+  state.playback = { progressMs: 0, receivedAt: performance.now(), duration: 32000, isPlaying: true };
+  updateProgress(0, 32000);
+  state.progressTimer = setInterval(() => {
+    progress = Math.floor(estimatedProgress() / 1000);
+    if (progress >= 32) { progress = 0; state.playback = { progressMs: 0, receivedAt: performance.now(), duration: 32000, isPlaying: true }; }
+  }, 100);
+  $('#playBtn').textContent = 'Ⅱ';
+}
+function setup() {
+  const settings = loadSettings();
+  if (settings.clientId) $('#clientId').value = settings.clientId;
+  const localCallback = /^http:\/\/(localhost|127\.0\.0\.1):8888\/callback\/?$/i;
+  const currentCallback = `${location.origin}/callback`;
+  const savedCallback = settings.redirectUri || '';
+  $('#redirectUri').value = savedCallback && !(location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && localCallback.test(savedCallback)) ? savedCallback : currentCallback;
+  $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
+  $('#settingsShortcut').addEventListener('click', () => $('#settingsDialog').showModal());
+  $('#connectBtn').addEventListener('click', () => { const cfg = loadSettings(); if (cfg.clientId) { $('#clientId').value = cfg.clientId; $('#redirectUri').value = cfg.redirectUri || $('#redirectUri').value; } $('#settingsDialog').showModal(); });
+  $('#saveSettings').addEventListener('click', connectSpotify);
+  $('#demoBtn').addEventListener('click', startDemo);
+  $('#navSearch').addEventListener('click', () => notify('La búsqueda manual de canciones llega pronto.'));
+  $('#navNow').addEventListener('click', () => notify('Esta es tu vista de reproducción en vivo.'));
+  $('#playBtn').addEventListener('click', async () => { if (state.demo) { if (state.progressTimer) { clearInterval(state.progressTimer); state.progressTimer = null; $('#playBtn').textContent = '▶'; } else { startDemo(); } return; } if (!state.token) return notify('Conectá Spotify primero.'); try { await spotifyRequest('/me/player/pause', 'PUT'); } catch { try { await spotifyRequest('/me/player/play', 'PUT'); } catch { notify('No hay ningún dispositivo Spotify activo.'); } } pollSpotify(); });
+  $('#prevBtn').addEventListener('click', () => state.demo ? notify('Demo: control de canción no disponible.') : spotifyRequest('/me/player/previous', 'POST').catch(() => notify('No encontramos un dispositivo activo.')));
+  $('#nextBtn').addEventListener('click', () => state.demo ? notify('Demo: control de canción no disponible.') : spotifyRequest('/me/player/next', 'POST').catch(() => notify('No encontramos un dispositivo activo.')));
+  handleCallback();
+}
+setup();

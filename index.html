@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#11130f" />
+  <title>Verso — letras en vivo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 19V8m6 16V5m6 18V9m6 10v-6"/></svg></span><span>verso<span class="brand-dot">.</span></span></a>
+      <div class="side-label">TU ESPACIO</div>
+      <button class="nav-item active" id="navNow"><span class="nav-icon">◉</span> Ahora suena</button>
+      <button class="nav-item" id="navSearch"><span class="nav-icon">⌕</span> Buscar una canción</button>
+      <div class="sidebar-divider"></div>
+      <div class="side-label">TU SESIÓN</div>
+      <div class="session-card"><span class="session-orb"></span><div><strong>Tu música, tus palabras</strong><small>Traducción en tiempo real</small></div></div>
+      <div class="sidebar-bottom"><div class="free-badge"><span>✳</span> 100% gratis</div><p>Las traducciones se generan al instante y no se guardan.</p><button id="openSettings" class="settings-link">⚙ &nbsp; Configuración</button></div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar"><div class="breadcrumbs"><span>Tu espacio</span><span class="slash">/</span><strong>Ahora suena</strong></div><button id="connectBtn" class="connect-btn"><span class="spotify-glyph">●</span> Conectar Spotify</button></header>
+      <section class="content-area">
+        <div class="eyebrow"><span class="live-dot"></span> LETRAS EN VIVO <span class="eyebrow-line"></span></div>
+        <div class="title-row"><div><h1>Sentí cada <em>palabra.</em></h1><p class="subtitle">La música que escuchás, en el idioma que sentís.</p></div><button class="demo-button" id="demoBtn"><span>▶</span> Ver demo</button></div>
+        <section class="player-card" id="playerCard">
+          <div class="album-art" id="albumArt"><div class="art-ring ring-one"></div><div class="art-ring ring-two"></div><div class="art-sun"></div><div class="art-grain"></div></div>
+          <div class="track-info"><div class="track-kicker"><span class="tiny-pulse"></span><span id="trackState">ESPERANDO MÚSICA</span></div><h2 id="trackName">Tu próxima canción</h2><p id="trackArtist">Conectá Spotify para empezar</p><div class="progress-wrap"><span id="currentTime">0:00</span><div class="progress"><div id="progressFill"></div><span id="progressThumb"></span></div><span id="duration">0:00</span></div><div class="player-controls"><button class="control" id="prevBtn" aria-label="Anterior">|◀</button><button class="play-button" id="playBtn" aria-label="Reproducir">▶</button><button class="control" id="nextBtn" aria-label="Siguiente">▶|</button><span class="player-note" id="playerNote">La letra aparece sincronizada con la reproducción</span></div></div>
+          <div class="player-side"><div class="source-chip"><span class="source-dot"></span><span id="sourceLabel">SIN CONEXIÓN</span></div><button class="more-button" id="settingsShortcut" aria-label="Configuración">•••</button></div>
+        </section>
+        <div class="lyrics-heading"><div><span class="section-kicker">LA CANCIÓN, LÍNEA A LÍNEA</span><h3>Letra <span>traducida</span></h3></div><div class="language-pill"><span>EN</span><span class="lang-arrow">→</span><span class="lang-es">ES</span></div></div>
+        <section class="lyrics-panel" id="lyricsPanel"><div class="lyrics-glow"></div><div class="lyrics-inner" id="lyricsInner"><div class="lyric-line past">Dejá que las palabras te encuentren</div><div class="lyric-line current"><span class="lyric-original">Conectá Spotify para ver la letra</span><span class="lyric-translation">La traducción va a aparecer acá, en vivo</span></div><div class="lyric-line future">Cada verso, en el momento justo</div><div class="lyric-line future dim">Sincronizado con la música</div></div><div class="lyrics-footer"><span><span class="sync-dot"></span> SINCRONIZACIÓN ACTIVA</span><span id="lyricsSource">LETRAS: LRCLIB</span></div></section>
+        <div class="bottom-note"><span class="sparkle">✳</span><span>Traducción automática gratuita</span><span class="note-separator">·</span><span>Puede tener pequeños matices distintos al original</span></div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <dialog id="settingsDialog" class="settings-dialog"><form method="dialog" id="settingsForm"><div class="dialog-head"><div><span class="section-kicker">PREFERENCIAS</span><h2>Conectemos tu música</h2></div><button class="close-btn" value="cancel" aria-label="Cerrar">×</button></div><p class="dialog-copy">Spotify permite leer qué canción suena. Para habilitarlo necesitás crear una app gratuita en Spotify for Developers.</p><label for="clientId">Client ID</label><input id="clientId" autocomplete="off" placeholder="Tu Client ID de Spotify" /><label for="redirectUri">Redirect URI</label><input id="redirectUri" autocomplete="off" /><div class="dialog-help">Agregá esa misma dirección en el Redirect URIs de tu app de Spotify.</div><div class="dialog-actions"><a href="https://developer.spotify.com/dashboard" target="_blank" rel="noreferrer">Abrir Spotify for Developers ↗</a><button type="button" class="save-btn" id="saveSettings">Guardar y conectar</button></div><div class="dialog-error" id="settingsError"></div></form></dialog>
+  <script src="app.js"></script>
+</body>
+</html>
