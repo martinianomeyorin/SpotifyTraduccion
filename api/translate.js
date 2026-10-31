@@ -13,30 +13,60 @@ export default {
       return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
     }
 
-    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    const lines = Array.isArray(body.lines)
+      ? body.lines.map(line => typeof line === 'string' ? line.trim() : '')
+      : [];
     const targetLanguage = typeof body.targetLanguage === 'string' ? body.targetLanguage : '';
-    if (!text || text.length > 500 || !supportedLanguages.has(targetLanguage)) {
+    if (!lines.length || lines.length > 3 || lines.some(line => !line || line.length > 500) || !supportedLanguages.has(targetLanguage)) {
       return Response.json({ error: 'Invalid text or target language' }, { status: 400 });
     }
 
-    const params = new URLSearchParams({ client: 'gtx', sl: 'auto', tl: targetLanguage, dt: 't', q: text });
+    const requestId = crypto.randomUUID();
+    const key = process.env.AZURE_TRANSLATOR_KEY;
+    const region = process.env.AZURE_TRANSLATOR_REGION;
+    const params = new URLSearchParams({ 'api-version': '3.0', to: targetLanguage });
+    const fail = (reason, details = {}, status = 502) => {
+      // Do not log the source text: lyric content is user data.
+      console.error(JSON.stringify({ event: 'translation_provider_error', requestId, provider: 'azure_translator', reason, targetLanguage, lineCount: lines.length, textLength: lines.reduce((total, line) => total + line.length, 0), ...details }));
+      return Response.json({ error: 'Translation provider unavailable', requestId }, { status });
+    };
+    if (!key) {
+      return fail('missing_azure_translator_key', {}, 503);
+    }
     try {
-      const upstream = await fetch(`https://translate.googleapis.com/translate_a/single?${params}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0 Verso/1.0' },
+      const headers = {
+        'Content-Type': 'application/json',
+        'Ocp-Apim-Subscription-Key': key
+      };
+      if (region) headers['Ocp-Apim-Subscription-Region'] = region;
+      const upstream = await fetch(`https://api.cognitive.microsofttranslator.com/translate?${params}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(lines.map(line => ({ Text: line }))),
         signal: AbortSignal.timeout(10000)
       });
       if (!upstream.ok) {
-        return Response.json({ error: 'Translation provider unavailable' }, { status: 502 });
+        return fail('upstream_http_error', { upstreamStatus: upstream.status, upstreamStatusText: upstream.statusText }, upstream.status);
       }
 
-      const data = await upstream.json();
-      const translation = (data[0] || []).map(part => part[0]).join('').trim();
-      if (!translation) {
-        return Response.json({ error: 'Empty translation' }, { status: 502 });
+      let data;
+      try {
+        data = await upstream.json();
+      } catch (error) {
+        return fail('invalid_upstream_json', { errorName: error.name, errorMessage: error.message });
       }
-      return Response.json({ translation }, { headers: { 'Cache-Control': 'no-store' } });
-    } catch {
-      return Response.json({ error: 'Translation provider unavailable' }, { status: 502 });
+      const translations = Array.isArray(data)
+        ? data.map(item => typeof item?.translations?.[0]?.text === 'string' ? item.translations[0].text.trim() : '')
+        : [];
+      if (translations.length !== lines.length || translations.some(line => !line)) {
+        return fail('invalid_upstream_translation_response', { expectedLineCount: lines.length, translatedLineCount: translations.length });
+      }
+      return Response.json({ translations }, { headers: { 'Cache-Control': 'no-store' } });
+    } catch (error) {
+      return fail(error.name === 'TimeoutError' || error.name === 'AbortError' ? 'upstream_timeout' : 'upstream_fetch_error', {
+        errorName: error.name,
+        errorMessage: error.message
+      });
     }
   }
 };

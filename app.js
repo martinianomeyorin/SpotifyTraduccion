@@ -76,7 +76,7 @@ function parseLrc(lrc) {
 async function fetchLyrics(track) {
   const params = new URLSearchParams({ track_name: track.name, artist_name: track.artists?.map(a => a.name).join(', ') || '', album_name: track.album?.name || '', duration: String(Math.round(track.duration_ms / 1000)) });
   try {
-    const response = await fetch(`https://lrclib.net/api/get?${params}`);
+    const response = await fetch(`/api/lyrics?type=get&${params}`);
     if (!response.ok) throw new Error('no sincronizada');
     const data = await response.json();
     if (!data.syncedLyrics) throw new Error('sin tiempos');
@@ -85,7 +85,7 @@ async function fetchLyrics(track) {
     // Fallback: search by title and artist in case the album/version metadata differs.
     try {
       const search = new URLSearchParams({ track_name: track.name, artist_name: track.artists?.map(a => a.name).join(', ') || '' });
-      const response = await fetch(`https://lrclib.net/api/search?${search}`);
+      const response = await fetch(`/api/lyrics?type=search&${search}`);
       const results = await response.json();
       const match = results.find(item => item.syncedLyrics);
       if (match) return { lines: parseLrc(match.syncedLyrics), source: 'LRCLIB' };
@@ -97,32 +97,47 @@ async function translateLines(lines, targetLanguage, runId) {
   const currentTime = state.lines[state.currentIndex]?.time ?? 0;
   const nonEmpty = lines.filter(line => line.original).sort((a, b) => Math.abs(a.time - currentTime) - Math.abs(b.time - currentTime));
   if (!nonEmpty.length) return;
-  // Keep a low request concurrency for the free translation provider and prioritize the
-  // verse currently playing so its translation arrives before later verses.
+  // Translate up to three verses per provider request, prioritizing the verse currently playing.
   for (let start = 0; start < nonEmpty.length; start += 3) {
     const batch = nonEmpty.slice(start, start + 3);
-    await Promise.all(batch.map(async line => {
-      try {
-        const response = await fetch('/api/translate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: line.original, targetLanguage }),
-          signal: AbortSignal.timeout(12000)
+    try {
+      const response = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lines: batch.map(line => line.original), targetLanguage }),
+        signal: AbortSignal.timeout(12000)
+      });
+      if (!response.ok) {
+        const details = await response.json().catch(() => ({}));
+        console.warn('[translate] API error', {
+          status: response.status,
+          requestId: details.requestId || null,
+          error: details.error || response.statusText
         });
-        if (!response.ok) throw new Error(`translate:${response.status}`);
-        const data = await response.json();
-        if (runId !== state.translationRun) return;
-        line.translation = data.translation || '';
+        throw new Error(`translate:${response.status}`);
+      }
+      const data = await response.json();
+      if (!Array.isArray(data.translations) || data.translations.length !== batch.length) {
+        throw new Error('Invalid translation batch response');
+      }
+      if (runId !== state.translationRun) return;
+      batch.forEach((line, index) => {
+        line.translation = data.translations[index] || '';
         line.translationFailed = !line.translation;
-        if (state.lines[state.currentIndex] === line) renderLyrics(state.currentIndex);
-      } catch {
-        if (runId === state.translationRun) {
+      });
+      renderLyrics(state.currentIndex);
+    } catch (error) {
+      if (!String(error.message).startsWith('translate:')) {
+        console.warn('[translate] Request failed', { message: error.message });
+      }
+      if (runId === state.translationRun) {
+        batch.forEach(line => {
           line.translation = '';
           line.translationFailed = true;
-          if (state.lines[state.currentIndex] === line) renderLyrics(state.currentIndex);
-        }
+        });
+        renderLyrics(state.currentIndex);
       }
-    }));
+    }
   }
 }
 function translateCurrentLyrics() {
